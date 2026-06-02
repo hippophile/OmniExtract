@@ -177,8 +177,9 @@ public class ExtractionService
         return MergeResults(results);
     }
 
+    // Only strip // comments that appear at line start (after whitespace) — never inside string values
     private static readonly System.Text.RegularExpressions.Regex LineCommentRegex =
-        new(@"//[^\n""]*(?=\n|$)", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"^\s*//[^\n]*\n?", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static UniversalOutput ParseResponse(string json, string method)
     {
