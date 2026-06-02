@@ -4,6 +4,7 @@ public class OpenAISettings
 {
     public string Endpoint { get; set; } = "https://models.inference.ai.azure.com";
     public string Model { get; set; } = "gpt-4.1";
+    public string VisionModel { get; set; } = "gpt-4o";
     public string ApiKeyEnvVar { get; set; } = "GITHUB_TOKEN";
 }
 

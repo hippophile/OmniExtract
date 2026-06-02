@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OmniExtract.Core.Config;
 using OmniExtract.Core.Models;
+using OmniExtract.App.Services;
 
 namespace OmniExtract.App.Services;
 
@@ -55,13 +56,15 @@ public class ExtractionService
     private readonly GptClient _gpt;
     private readonly TokenCounter _tokens;
     private readonly ProcessingSettings _settings;
+    private readonly string _visionModel;
     private readonly ILogger<ExtractionService> _logger;
 
-    public ExtractionService(GptClient gpt, TokenCounter tokens, IOptions<ProcessingSettings> settings, ILogger<ExtractionService> logger)
+    public ExtractionService(GptClient gpt, TokenCounter tokens, IOptions<ProcessingSettings> settings, IOptions<OpenAISettings> openai, ILogger<ExtractionService> logger)
     {
         _gpt = gpt;
         _tokens = tokens;
         _settings = settings.Value;
+        _visionModel = openai.Value.VisionModel;
         _logger = logger;
     }
 
@@ -170,7 +173,7 @@ public class ExtractionService
                 new UserGptMessage(prompt, chunks[i].ToList())
             };
 
-            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct, model: _visionModel);
             results.Add(ParseResponse(response, "vision"));
         }
 

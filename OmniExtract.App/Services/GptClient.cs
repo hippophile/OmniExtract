@@ -26,13 +26,13 @@ public class GptClient : IAsyncDisposable
         _logger = logger;
     }
 
-    public async Task<string> CallAsync(List<GptMessage> messages, float temperature = 0, int? maxTokens = null, CancellationToken ct = default)
+    public async Task<string> CallAsync(List<GptMessage> messages, float temperature = 0, int? maxTokens = null, CancellationToken ct = default, string? model = null)
     {
-        var result = await CallWithMetadataAsync(messages, temperature, maxTokens, ct);
+        var result = await CallWithMetadataAsync(messages, temperature, maxTokens, ct, model);
         return result.Content;
     }
 
-    public async Task<GptCallResult> CallWithMetadataAsync(List<GptMessage> messages, float temperature = 0, int? maxTokens = null, CancellationToken ct = default)
+    public async Task<GptCallResult> CallWithMetadataAsync(List<GptMessage> messages, float temperature = 0, int? maxTokens = null, CancellationToken ct = default, string? model = null)
     {
         for (var attempt = 0; attempt < 5; attempt++)
         {
@@ -46,7 +46,7 @@ public class GptClient : IAsyncDisposable
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
 
-                    var result = await ExecuteAsync(messages, timeoutCts.Token);
+                    var result = await ExecuteAsync(messages, model ?? _settings.Model, timeoutCts.Token);
                     _logger.LogInformation("  GPT: response OK ({Length} chars)", result.Content.Length);
                     return result;
                 }
@@ -87,7 +87,7 @@ public class GptClient : IAsyncDisposable
         throw new InvalidOperationException("GPT call failed after max retries");
     }
 
-    private async Task<GptCallResult> ExecuteAsync(List<GptMessage> messages, CancellationToken ct)
+    private async Task<GptCallResult> ExecuteAsync(List<GptMessage> messages, string model, CancellationToken ct)
     {
         var systemContent = string.Join("\n\n", messages.OfType<SystemGptMessage>().Select(m => m.Content));
         var nonSystem = messages.Where(m => m is not SystemGptMessage).ToList();
@@ -132,7 +132,7 @@ public class GptClient : IAsyncDisposable
 
         await using var session = await _copilot.CreateSessionAsync(new SessionConfig
         {
-            Model = _settings.Model,
+            Model = model,
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Replace,
