@@ -5,15 +5,6 @@ using Microsoft.Extensions.Options;
 using OmniExtract.App.Services;
 using OmniExtract.Core.Config;
 
-// Validate GITHUB_TOKEN on startup
-var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-if (string.IsNullOrWhiteSpace(token))
-{
-    Console.Error.WriteLine("ERROR: GITHUB_TOKEN environment variable is not set.");
-    Console.Error.WriteLine("Set it before running: export GITHUB_TOKEN=your_token");
-    return 1;
-}
-
 if (args.Length == 0)
 {
     PrintUsage();
