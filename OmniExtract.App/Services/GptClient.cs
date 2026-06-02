@@ -72,6 +72,11 @@ public class GptClient : IAsyncDisposable
                 _logger.LogWarning("Overloaded; waiting {Wait}s ({Attempt}/5)", wait, attempt + 1);
                 await Task.Delay(TimeSpan.FromSeconds(wait), ct);
             }
+            catch (Exception ex) when (IsContextLimitExceeded(ex))
+            {
+                _logger.LogWarning("Context limit exceeded — not retrying");
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "GPT API call failed on attempt {Attempt}", attempt + 1);
@@ -163,6 +168,10 @@ public class GptClient : IAsyncDisposable
         var cleaned = MarkdownFenceRegex.Replace(response, string.Empty).Trim();
         return new GptCallResult(cleaned, false);
     }
+
+    public static bool IsContextLimitExceeded(Exception ex) =>
+        ex.ToString().Contains("prompt token count", StringComparison.OrdinalIgnoreCase) &&
+        ex.ToString().Contains("exceeds the limit", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRateLimit(Exception ex)
     {

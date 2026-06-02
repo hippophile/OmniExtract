@@ -45,7 +45,11 @@ public class ExtractionService
           "gaps": ["description of missing/uncertain field"]
         }
 
-        Never wrap the JSON in markdown fences. Respond with raw JSON only.
+        STRICT RULES:
+        - Never wrap the JSON in markdown fences or code blocks
+        - Never truncate tables or arrays — include ALL rows
+        - Never add comments (no // or /* */ inside JSON)
+        - Respond with raw, valid JSON only
         """;
 
     private readonly GptClient _gpt;
@@ -115,26 +119,32 @@ public class ExtractionService
 
         if (baseTokens <= _settings.ModelContextLimit)
         {
-            var messages = new List<GptMessage> { systemMsg, new UserGptMessage(text) };
-            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
-            return ParseResponse(response, "text");
+            try
+            {
+                var messages = new List<GptMessage> { systemMsg, new UserGptMessage(text) };
+                var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+                return ParseResponse(response, "text");
+            }
+            catch (Exception ex) when (GptClient.IsContextLimitExceeded(ex))
+            {
+                _logger.LogWarning("Context limit hit despite pre-flight check — falling back to chunking");
+            }
         }
 
-        // Chunked extraction
+        // Chunked extraction — use conservative char-based splitting to avoid tokenizer skew
         _logger.LogInformation("Document too large — chunking...");
-        var available = _settings.ModelContextLimit - _tokens.CountTokens(SystemPrompt) - _settings.MaxOutputTokens - _settings.TokenBuffer;
-        var chunks = ChunkText(text, available);
+        const int InitialChunkChars = 80_000;
+        var chunks = ChunkTextByChars(text, InitialChunkChars);
         _logger.LogInformation("Split into {Count} chunks", chunks.Count);
 
         var results = new List<UniversalOutput>();
         for (var i = 0; i < chunks.Count; i++)
         {
             _logger.LogInformation("Processing chunk {I}/{Total}", i + 1, chunks.Count);
-            var prompt = chunks.Count > 1
-                ? $"[Chunk {i + 1} of {chunks.Count}]\n\n{chunks[i]}"
-                : chunks[i];
+            var chunkText = chunks[i];
+            var prompt = chunks.Count > 1 ? $"[Chunk {i + 1} of {chunks.Count}]\n\n{chunkText}" : chunkText;
             var messages = new List<GptMessage> { systemMsg, new UserGptMessage(prompt) };
-            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+            var response = await CallWithHalvingAsync(messages, chunkText, systemMsg, i + 1, chunks.Count, ct);
             results.Add(ParseResponse(response, "text"));
         }
 
@@ -167,11 +177,16 @@ public class ExtractionService
         return MergeResults(results);
     }
 
+    private static readonly System.Text.RegularExpressions.Regex LineCommentRegex =
+        new(@"//[^\n""]*(?=\n|$)", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private static UniversalOutput ParseResponse(string json, string method)
     {
         try
         {
-            var output = JsonSerializer.Deserialize<UniversalOutput>(json, JsonOpts);
+            // Strip JS-style line comments the model sometimes adds
+            var cleaned = LineCommentRegex.Replace(json, string.Empty);
+            var output = JsonSerializer.Deserialize<UniversalOutput>(cleaned, JsonOpts);
             if (output is not null)
             {
                 if (string.IsNullOrWhiteSpace(output.Meta.ExtractionMethod))
@@ -221,30 +236,43 @@ public class ExtractionService
         return merged;
     }
 
-    private List<string> ChunkText(string text, int maxTokensPerChunk)
+    private async Task<string> CallWithHalvingAsync(List<GptMessage> messages, string chunkText, SystemGptMessage systemMsg, int chunkNum, int totalChunks, CancellationToken ct, int depth = 0)
+    {
+        try
+        {
+            return await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+        }
+        catch (Exception ex) when (GptClient.IsContextLimitExceeded(ex) && depth < 4)
+        {
+            _logger.LogWarning("Chunk {N} still too large — halving (depth {D})", chunkNum, depth + 1);
+            var half = chunkText.Length / 2;
+            var a = chunkText[..half];
+            var b = chunkText[half..];
+            var ma = new List<GptMessage> { systemMsg, new UserGptMessage($"[Sub-chunk {chunkNum}a of {totalChunks}]\n\n{a}") };
+            var mb = new List<GptMessage> { systemMsg, new UserGptMessage($"[Sub-chunk {chunkNum}b of {totalChunks}]\n\n{b}") };
+            var ra = await CallWithHalvingAsync(ma, a, systemMsg, chunkNum, totalChunks, ct, depth + 1);
+            var rb = await CallWithHalvingAsync(mb, b, systemMsg, chunkNum, totalChunks, ct, depth + 1);
+            var merged = MergeResults([ParseResponse(ra, "text"), ParseResponse(rb, "text")]);
+            return System.Text.Json.JsonSerializer.Serialize(merged);
+        }
+    }
+
+    private static List<string> ChunkTextByChars(string text, int maxChars)
     {
         var chunks = new List<string>();
-        var words = text.Split(' ');
-        var current = new StringBuilder();
-        var currentTokens = 0;
-
-        foreach (var word in words)
+        var pos = 0;
+        while (pos < text.Length)
         {
-            var wordTokens = _tokens.CountTokens(word + " ");
-            if (currentTokens + wordTokens > maxTokensPerChunk && current.Length > 0)
+            var len = Math.Min(maxChars, text.Length - pos);
+            // Break on newline boundary if possible
+            if (pos + len < text.Length)
             {
-                chunks.Add(current.ToString().Trim());
-                current.Clear();
-                currentTokens = 0;
+                var nl = text.LastIndexOf('\n', pos + len, len / 2);
+                if (nl > pos) len = nl - pos;
             }
-            current.Append(word);
-            current.Append(' ');
-            currentTokens += wordTokens;
+            chunks.Add(text.Substring(pos, len).Trim());
+            pos += len;
         }
-
-        if (current.Length > 0)
-            chunks.Add(current.ToString().Trim());
-
         return chunks;
     }
 }
