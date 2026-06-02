@@ -17,7 +17,6 @@
     <PackageReference Include="GitHub.Copilot.SDK" Version="0.3.0" />
     <PackageReference Include="Docnet.Core" Version="2.6.0" />
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
-    <PackageReference Include="HtmlAgilityPack" Version="1.11.70" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="MimeKit" Version="4.8.0" />
     <PackageReference Include="PdfPig" Version="0.1.14" />

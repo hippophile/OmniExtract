@@ -1,6 +1,4 @@
-using System.Net;
 using System.Text;
-using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
 using Docnet.Core;
@@ -9,7 +7,6 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Wordprocessing;
-using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MimeKit;
@@ -35,7 +32,6 @@ public class DocumentProcessor
         ".txt", ".md", ".rtf",
         ".csv", ".tsv",
         ".json", ".jsonl", ".yaml", ".yml", ".xml",
-        ".html", ".htm",
         ".eml"
     };
 
@@ -98,7 +94,6 @@ public class DocumentProcessor
         ".json" or ".jsonl" or ".yaml" or ".yml" or ".xml" => new ExtractionResult { Text = ReadTextFile(filePath) },
         ".csv" => ExtractCsv(filePath, ','),
         ".tsv" => ExtractCsv(filePath, '\t'),
-        ".html" or ".htm" => ExtractHtml(filePath),
         ".eml" => ExtractEml(filePath),
         ".docx" => ExtractDocx(filePath),
         ".xlsx" => ExtractXlsx(filePath),
@@ -126,18 +121,6 @@ public class DocumentProcessor
             rows.Add(string.Join(delimiter == '\t' ? "\t" : ", ", fields));
         }
         return new ExtractionResult { Text = string.Join("\n", rows) };
-    }
-
-    private static ExtractionResult ExtractHtml(string filePath)
-    {
-        var doc = new HtmlDocument();
-        doc.Load(filePath);
-
-        foreach (var node in doc.DocumentNode.SelectNodes("//script|//style") ?? Enumerable.Empty<HtmlNode>())
-            node.Remove();
-
-        var text = WebUtility.HtmlDecode(doc.DocumentNode.InnerText);
-        return new ExtractionResult { Text = NormalizeText(text) };
     }
 
     private static ExtractionResult ExtractEml(string filePath)
