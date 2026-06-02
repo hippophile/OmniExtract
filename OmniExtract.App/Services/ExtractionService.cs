@@ -16,13 +16,15 @@ public class ExtractionService
     private const string SystemPrompt = """
         You are a universal document extraction engine.
 
-        Given the content of a document (text or images), perform the following:
-        1. Infer the document type (e.g. invoice, contract, report, email, form, meeting minutes, financial statement, etc.)
-        2. Extract ALL fields, values, tables, dates, names, amounts, and entities present in the document.
+        Given the content of a document (text or images), extract everything that is actually present.
+        Do NOT infer, assume, or flag missing fields — only output what the document contains.
+
+        Perform the following:
+        1. Identify the document type (e.g. invoice, contract, report, email, form, etc.)
+        2. Extract ALL fields, values, tables, dates, names, amounts, and entities present in the document
         3. Generate a flat array of descriptive tags (document type, language(s), year, domain, entity names, etc.)
-        4. Assign hierarchical categories: domain (finance/legal/hr/technical/general), subdomain, and sensitivity (public/internal/confidential/restricted)
+        4. Assign categories: domain (finance/legal/hr/technical/general), subdomain, and sensitivity (public/internal/confidential/restricted)
         5. Score your confidence in extraction quality from 0.0 to 1.0
-        6. List any fields you expected for this document type but could not find or were uncertain about
 
         Respond ONLY with a valid JSON object matching this exact schema:
         {
@@ -42,14 +44,14 @@ public class ExtractionService
           "data": { "field_name": "value" },
           "tables": [
             [["header1", "header2"], ["row1col1", "row1col2"]]
-          ],
-          "gaps": ["description of missing/uncertain field"]
+          ]
         }
 
         STRICT RULES:
         - Never wrap the JSON in markdown fences or code blocks
         - Never truncate tables or arrays — include ALL rows
         - Never add comments (no // or /* */ inside JSON)
+        - Never invent fields that are not present in the document
         - Respond with raw, valid JSON only
         """;
 
@@ -76,7 +78,7 @@ public class ExtractionService
         {
             meta.ExtractionMethod = "failed";
             meta.Warnings.Add(extracted.Error);
-            return new UniversalOutput { Meta = meta, Gaps = ["Extraction failed: " + extracted.Error] };
+            return new UniversalOutput { Meta = meta };
         }
 
         try
@@ -109,8 +111,7 @@ public class ExtractionService
             return new UniversalOutput
             {
                 Meta = meta,
-                Data = new Dictionary<string, object?> { ["raw_error"] = ex.Message },
-                Gaps = ["AI extraction failed"]
+                Data = new Dictionary<string, object?> { ["raw_error"] = ex.Message }
             };
         }
     }
@@ -208,12 +209,11 @@ public class ExtractionService
                 ExtractionMethod = method,
                 Warnings = ["JSON parse failed — raw response stored"]
             },
-            Data = new Dictionary<string, object?> { ["raw_response"] = json },
-            Gaps = ["AI response could not be parsed as JSON"]
+            Data = new Dictionary<string, object?> { ["raw_response"] = json }
         };
     }
 
-    private static UniversalOutput MergeResults(List<UniversalOutput> results)
+    public static UniversalOutput MergeResults(List<UniversalOutput> results)
     {
         if (results.Count == 1) return results[0];
 
@@ -233,8 +233,7 @@ public class ExtractionService
             Categories = first.Categories,
             Data = results.SelectMany(r => r.Data).GroupBy(kv => kv.Key)
                 .ToDictionary(g => g.Key, g => g.First().Value),
-            Tables = results.SelectMany(r => r.Tables).ToList(),
-            Gaps = results.SelectMany(r => r.Gaps).Distinct().ToList()
+            Tables = results.SelectMany(r => r.Tables).ToList()
         };
 
         return merged;

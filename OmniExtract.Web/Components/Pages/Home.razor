@@ -1,0 +1,107 @@
+@page "/"
+@inject ResultsRepository Repo
+@inject NavigationManager Nav
+
+<PageTitle>OmniExtract</PageTitle>
+
+<header class="topbar">
+    <span class="topbar-title">OmniExtract</span>
+    <span class="topbar-sep">/</span>
+    <span class="topbar-sub">Document Intelligence POC</span>
+</header>
+
+<div class="page-content afu">
+
+    <!-- Extract CTA -->
+    <div class="dash-cta card afu d1" @onclick='() => Nav.NavigateTo("/upload")' style="cursor:pointer;">
+        <div class="dash-cta-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16,16 12,12 8,16"/>
+                <line x1="12" y1="12" x2="12" y2="21"/>
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+            </svg>
+        </div>
+        <div class="dash-cta-body">
+            <div class="dash-cta-title">Extract a Document</div>
+            <div class="dash-cta-sub">Drop any PDF, Word, Excel, image, email, or archive — AI extracts all structured data automatically.</div>
+        </div>
+        <div class="dash-cta-arrow">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,18 15,12 9,6"/></svg>
+        </div>
+    </div>
+
+    <!-- Recent Extractions -->
+    <div class="card afu d2" style="margin-top:24px;">
+        <div class="card-header">
+            <span class="card-title">Recent Extractions</span>
+            @if (_all.Count > 0)
+            {
+                <button class="btn btn-sm btn-ghost" @onclick='() => Nav.NavigateTo("/results")'>View all</button>
+            }
+        </div>
+        @if (_all.Count == 0)
+        {
+            <div class="empty" style="padding:32px 0;">
+                <div class="empty-title">No extractions yet</div>
+                <div class="empty-sub">Upload a document to get started.</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var entry in Recent)
+            {
+                var icon = DomainIcon(entry.Output.Categories.Domain);
+                <div class="activity-item" @onclick='() => Nav.NavigateTo($"/results/{entry.Id}")' style="cursor:pointer;">
+                    <div class="act-icon @icon.cls">
+                        @((MarkupString)icon.svg)
+                    </div>
+                    <div class="act-body">
+                        <div class="act-name">@entry.Output.Meta.DocumentType</div>
+                        <div class="act-meta">@TruncateName(entry.FileName)</div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                        <div class="act-time">@TimeAgo(entry.ProcessedAt)</div>
+                        <div class="badge @entry.Output.Categories.Sensitivity">
+                            <div class="badge-dot"></div>
+                            @entry.Output.Categories.Sensitivity
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+</div>
+
+@code {
+    IReadOnlyList<ResultsEntry> _all = [];
+
+    IEnumerable<ResultsEntry> Recent => _all.Take(5);
+
+    protected override void OnInitialized()
+    {
+        _all = Repo.GetAll();
+    }
+
+    static string TimeAgo(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 2)  return "just now";
+        if (diff.TotalHours < 1)    return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalDays < 1)     return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7)     return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("d MMM");
+    }
+
+    static string TruncateName(string s) =>
+        s.Length > 36 ? s[..34] + "…" : s;
+
+    static (string cls, string svg) DomainIcon(string domain) => domain switch
+    {
+        "finance"   => ("f", "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/></svg>"),
+        "hr"        => ("c", "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/></svg>"),
+        "legal"     => ("l", "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>"),
+        "technical" => ("t", "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><line x1='8' y1='21' x2='16' y2='21'/><line x1='12' y1='17' x2='12' y2='21'/></svg>"),
+        _           => ("g", "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><polyline points='14,2 14,8 20,8'/></svg>")
+    };
+}

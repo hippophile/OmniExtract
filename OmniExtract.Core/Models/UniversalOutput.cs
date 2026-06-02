@@ -18,9 +18,6 @@ public class UniversalOutput
 
     [JsonPropertyName("tables")]
     public List<List<List<string>>> Tables { get; set; } = new();
-
-    [JsonPropertyName("gaps")]
-    public List<string> Gaps { get; set; } = new();
 }
 
 public class OutputCategories

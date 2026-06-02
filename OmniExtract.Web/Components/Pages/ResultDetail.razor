@@ -1,0 +1,282 @@
+@page "/results/{Id}"
+@inject ResultsRepository Repo
+@inject NavigationManager Nav
+
+<PageTitle>@(_entry?.Output.Meta.DocumentType ?? "Result") — OmniExtract</PageTitle>
+
+@if (_entry is null)
+{
+    <header class="topbar"><span class="topbar-title">Result</span></header>
+    <div class="page-content"><div class="empty"><div class="empty-title">Result not found.</div></div></div>
+}
+else
+{
+    var m = _entry.Output.Meta;
+    var conf = m.Confidence * 100;
+    var circumference = 2 * Math.PI * 44;
+    var dashArray = $"{conf / 100 * circumference:F1} {circumference:F1}";
+
+    <header class="topbar">
+        <span class="topbar-title">Result Detail</span>
+        <span class="topbar-sep">/</span>
+        <span class="topbar-sub">@m.DocumentType</span>
+        <div class="topbar-right">
+            <button class="btn btn-ghost btn-sm" @onclick='() => Nav.NavigateTo("/results")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
+                All Results
+            </button>
+        </div>
+    </header>
+
+    <div class="page-content afu">
+
+        <!-- Hero header -->
+        <div class="detail-hero">
+            <div class="detail-hero-body">
+                <div class="detail-doc-icon">
+                    @((MarkupString)DomainIconLarge(_entry.Output.Categories.Domain))
+                </div>
+                <div style="flex:1;min-width:0;">
+                    <div class="detail-doc-type">@_entry.Output.Categories.Domain &nbsp;·&nbsp; @_entry.Output.Categories.Subdomain</div>
+                    <div class="detail-doc-name">@m.DocumentType</div>
+                    <div class="detail-meta-row">
+                        <span class="detail-meta-item">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+                            @_entry.FileName
+                        </span>
+                        <span class="detail-meta-item">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+                            @_entry.ProcessedAt.ToString("d MMM yyyy, HH:mm")
+                        </span>
+                        @if (m.Language.Any())
+                        {
+                            <span class="detail-meta-item">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                @string.Join(", ", m.Language).ToUpper()
+                            </span>
+                        }
+                        <span class="badge @_entry.Output.Categories.Sensitivity" style="font-size:12px;">
+                            <div class="badge-dot"></div>
+                            @_entry.Output.Categories.Sensitivity
+                        </span>
+                        <span class="badge method-badge">@m.ExtractionMethod</span>
+                    </div>
+                </div>
+
+                <!-- Confidence ring -->
+                <div class="ring-wrap" style="width:110px;height:110px;flex-shrink:0;">
+                    <svg width="110" height="110" viewBox="0 0 110 110">
+                        <circle cx="55" cy="55" r="44" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="8"/>
+                        <circle cx="55" cy="55" r="44" fill="none"
+                                stroke="@(conf >= 90 ? "#4ade80" : conf >= 75 ? "#fbbf24" : "#f87171")"
+                                stroke-width="8"
+                                stroke-linecap="round"
+                                stroke-dasharray="@dashArray"
+                                transform="rotate(-90 55 55)"
+                                style="transition:stroke-dasharray 1s var(--ease)"/>
+                    </svg>
+                    <div class="ring-label">
+                        <div class="ring-pct" style="color:#fff">@conf.ToString("F0")%</div>
+                        <div class="ring-sub" style="color:rgba(255,255,255,.5)">Confidence</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Warnings -->
+        @if (m.Warnings.Any())
+        {
+            <div class="warn-list" style="margin-bottom:24px;">
+                @foreach (var w in m.Warnings)
+                {
+                    <div class="warn-item">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        @w
+                    </div>
+                }
+            </div>
+        }
+
+        <!-- Main layout -->
+        <div class="detail-cols">
+
+            <!-- Main column -->
+            <div style="display:flex;flex-direction:column;gap:24px;">
+
+                <!-- Extracted fields -->
+                @if (_entry.Output.Data.Any())
+                {
+                    var fieldsOpen = IsOpen("fields");
+                    <div>
+                        <button class="section-toggle" @onclick='() => Toggle("fields")'>
+                            <span class="section-chevron">@(fieldsOpen ? "▾" : "▶")</span>
+                            <span class="section-toggle-title">Extracted Fields</span>
+                            <span class="section-toggle-meta">@_entry.Output.Data.Count fields</span>
+                        </button>
+                        @if (fieldsOpen)
+                        {
+                            <div class="fields-grid">
+                                @foreach (var (k, v) in _entry.Output.Data)
+                                {
+                                    <div class="field-cell">
+                                        <div class="field-key">@k.Replace("_", " ")</div>
+                                        <div class="field-val">@(v?.ToString() ?? "—")</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Tables -->
+                @for (var ti = 0; ti < _entry.Output.Tables.Count; ti++)
+                {
+                    var table = _entry.Output.Tables[ti];
+                    if (table.Count < 2) continue;
+                    var tableKey = $"table_{ti}";
+                    var tableOpen = IsOpen(tableKey);
+                    var tableIndex = ti;
+                    <div>
+                        <button class="section-toggle" @onclick='() => Toggle(tableKey)'>
+                            <span class="section-chevron">@(tableOpen ? "▾" : "▶")</span>
+                            <span class="section-toggle-title">Table @(tableIndex + 1)</span>
+                            <span class="section-toggle-meta">@(table.Count - 1) rows · @table[0].Count cols</span>
+                        </button>
+                        @if (tableOpen)
+                        {
+                            <div class="table-wrap">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            @foreach (var h in table[0])
+                                            {
+                                                <th>@h</th>
+                                            }
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @for (var ri = 1; ri < table.Count; ri++)
+                                        {
+                                            <tr>
+                                                @foreach (var cell in table[ri])
+                                                {
+                                                    <td>@cell</td>
+                                                }
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Raw JSON -->
+                <div>
+                    <button class="section-toggle" @onclick='() => Toggle("raw")'>
+                        <span class="section-chevron">@(IsOpen("raw") ? "▾" : "▶")</span>
+                        <span class="section-toggle-title">Raw JSON Output</span>
+                    </button>
+                    @if (IsOpen("raw"))
+                    {
+                        <pre class="raw-json afi">@_json</pre>
+                    }
+                </div>
+
+            </div>
+
+            <!-- Sidebar -->
+            <div class="detail-sidebar">
+
+                <!-- Tags -->
+                @if (_entry.Output.Tags.Any())
+                {
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">Tags</span></div>
+                        <div class="card-body">
+                            <div class="tag-list">
+                                @foreach (var tag in _entry.Output.Tags)
+                                {
+                                    <span class="tag">@tag</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                <!-- Metadata -->
+                <div class="card" style="margin-top:20px;">
+                    <div class="card-header"><span class="card-title">Metadata</span></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+                        <div>
+                            <div class="field-key">Source file</div>
+                            <div class="field-val" style="font-size:13px;word-break:break-all;">@m.SourceFile</div>
+                        </div>
+                        <div>
+                            <div class="field-key">Extraction method</div>
+                            <div style="margin-top:4px;"><span class="badge method-badge">@m.ExtractionMethod</span></div>
+                        </div>
+                        <div>
+                            <div class="field-key">Domain</div>
+                            <div style="margin-top:4px;"><span class="badge domain-badge">@_entry.Output.Categories.Domain</span></div>
+                        </div>
+                        <div>
+                            <div class="field-key">Sensitivity</div>
+                            <div style="margin-top:4px;">
+                                <span class="badge @_entry.Output.Categories.Sensitivity">
+                                    <div class="badge-dot"></div>
+                                    @_entry.Output.Categories.Sensitivity
+                                </span>
+                            </div>
+                        </div>
+                        @if (m.Language.Any())
+                        {
+                            <div>
+                                <div class="field-key">Languages</div>
+                                <div class="field-val" style="font-size:13px;">@string.Join(", ", m.Language).ToUpper()</div>
+                            </div>
+                        }
+                        <div>
+                            <div class="field-key">Processed</div>
+                            <div class="field-val" style="font-size:13px;">@_entry.ProcessedAt.ToString("d MMM yyyy, HH:mm UTC")</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+
+    ResultsEntry? _entry;
+    string _json = "";
+    Dictionary<string, bool> _expanded = [];
+
+    bool IsOpen(string key) => _expanded.TryGetValue(key, out var v) && v;
+    void Toggle(string key) => _expanded[key] = !IsOpen(key);
+
+    protected override void OnParametersSet()
+    {
+        _entry = Repo.GetById(Id);
+        _expanded = [];
+        if (_entry is not null)
+        {
+            _json = System.Text.Json.JsonSerializer.Serialize(
+                _entry.Output,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    static string DomainIconLarge(string domain) => domain switch
+    {
+        "finance"   => "<svg width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/></svg>",
+        "hr"        => "<svg width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/></svg>",
+        "legal"     => "<svg width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>",
+        "technical" => "<svg width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><line x1='8' y1='21' x2='16' y2='21'/><line x1='12' y1='17' x2='12' y2='21'/></svg>",
+        _           => "<svg width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><polyline points='14,2 14,8 20,8'/></svg>",
+    };
+}

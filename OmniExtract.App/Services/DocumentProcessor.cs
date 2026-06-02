@@ -54,7 +54,32 @@ public class DocumentProcessor
         try
         {
             if (NativeExtensions.Contains(ext))
-                return ExtractNative(filePath, ext);
+            {
+                try
+                {
+                    return ExtractNative(filePath, ext);
+                }
+                catch (Exception ex)
+                {
+                    if (ext is ".docx" or ".xlsx" or ".pptx")
+                    {
+                        _logger.LogWarning(ex, "Native parse failed for {Ext} — trying LibreOffice fallback", ext);
+                        var fallbackPdf = await _libreOffice.ConvertToPdfAsync(filePath, ct);
+                        if (fallbackPdf is not null)
+                        {
+                            try { return ExtractNative(fallbackPdf, ".pdf"); }
+                            finally { TryDelete(fallbackPdf); }
+                        }
+                    }
+                    else if (ext is ".csv" or ".tsv")
+                    {
+                        _logger.LogWarning(ex, "CSV parse failed — falling back to raw text");
+                        try { return new ExtractionResult { Text = ReadTextFile(filePath) }; }
+                        catch { }
+                    }
+                    return new ExtractionResult { Error = ex.Message };
+                }
+            }
 
             // Unknown/legacy — try LibreOffice → PDF pipeline
             var pdfPath = await _libreOffice.ConvertToPdfAsync(filePath, ct);
@@ -125,7 +150,17 @@ public class DocumentProcessor
 
     private static ExtractionResult ExtractEml(string filePath)
     {
-        var msg = MimeMessage.Load(filePath);
+        var opts = new MimeKit.ParserOptions { RespectContentLength = false };
+        MimeMessage msg;
+        try
+        {
+            msg = MimeMessage.Load(opts, filePath);
+        }
+        catch (FormatException)
+        {
+            // Truly malformed — read raw text and let AI handle it
+            return new ExtractionResult { Text = File.ReadAllText(filePath) };
+        }
         var parts = new List<string>
         {
             $"From: {msg.From}",

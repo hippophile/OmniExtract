@@ -1,0 +1,243 @@
+@page "/upload"
+@inject ExtractionOrchestrator Orchestrator
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>Extract Documents — OmniExtract</PageTitle>
+
+<header class="topbar">
+    <span class="topbar-title">Extract Documents</span>
+    <span class="topbar-sep">/</span>
+    <span class="topbar-sub">AI-powered extraction</span>
+    <div class="topbar-right">
+        @if (ActiveCount > 0)
+        {
+            <div class="topbar-badge">
+                <div class="topbar-badge-dot"></div>
+                @ActiveCount processing
+            </div>
+        }
+    </div>
+</header>
+
+<div class="page-content afu">
+
+    <div class="page-header">
+        <div class="page-title">Upload Documents</div>
+        <div class="page-sub">Drop any document — PDF, Word, Excel, images, emails, archives. GPT-4.1 extracts all structured data automatically.</div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="upload-zone @(_dragOver ? "drag-over" : "")"
+         @ondragenter="OnDragEnter" @ondragleave="OnDragLeave" @ondragover:preventDefault="true">
+        <div class="upload-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16,16 12,12 8,16"/>
+                <line x1="12" y1="12" x2="12" y2="21"/>
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+            </svg>
+        </div>
+        <div class="upload-headline">Drop files here or click to browse</div>
+        <div class="upload-sub">Maximum 100 MB per file. All document types supported.</div>
+        <button class="fmt-toggle" @onclick="() => _formatsExpanded = !_formatsExpanded" type="button">
+            @(_formatsExpanded ? "Hide formats ▴" : "Supported formats ▾")
+        </button>
+        @if (_formatsExpanded)
+        {
+            <div class="upload-formats">
+                @foreach (var f in new[]{"PDF","DOCX","DOC","XLSX","XLS","PPTX","PPT","ODT","ODS","ODP","PNG","JPG","JPEG","TIFF","BMP","WEBP","EML","CSV","TSV","TXT","MD","JSON","YAML","XML","ZIP","RTF"})
+                {
+                    <span class="fmt-chip">@f</span>
+                }
+            </div>
+        }
+        <InputFile OnChange="OnFilesSelected" multiple accept="*/*"
+                   style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;" />
+    </div>
+
+    <!-- Job queue -->
+    @if (Jobs.Any())
+    {
+        <div style="margin-top:32px;">
+            <div class="section-title">Processing Queue</div>
+            <div class="job-list">
+                @foreach (var job in Jobs)
+                {
+                    @if (job.Status == JobStatus.Processing)
+                    {
+                        <!-- Expanded pipeline card -->
+                        <div class="pipeline-card afi">
+                            <div class="pipeline-card-header">
+                                <div class="pipeline-filename">@job.FileName</div>
+                                <div class="pipe-elapsed">@FormatElapsed(job.StageStartedAt)</div>
+                            </div>
+                            <div class="pipe-steps">
+                                @for (var i = 0; i < _stepLabels.Length; i++)
+                                {
+                                    var stepIndex = i;
+                                    var active = GetActiveStep(job.Stage, job.Status);
+                                    var stepClass = stepIndex < active ? "done"
+                                                  : stepIndex == active ? "active"
+                                                  : "pending";
+                                    <div class="pipe-step @stepClass">
+                                        <div class="pipe-step-circle">
+                                            @if (stepClass == "done")
+                                            {
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20,6 9,17 4,12"/></svg>
+                                            }
+                                            else if (stepClass == "active")
+                                            {
+                                                <div class="pipe-step-dot"></div>
+                                            }
+                                            else
+                                            {
+                                                <div class="pipe-step-num">@(stepIndex + 1)</div>
+                                            }
+                                        </div>
+                                        <div class="pipe-step-label">@_stepLabels[stepIndex]</div>
+                                    </div>
+                                    @if (stepIndex < _stepLabels.Length - 1)
+                                    {
+                                        var connDone = stepIndex < active;
+                                        <div class="pipe-connector @(connDone ? "done" : "")"></div>
+                                    }
+                                }
+                            </div>
+                            <div class="pipe-detail">@job.Stage</div>
+                            @if (ShouldShowStats(job))
+                            {
+                                <div class="pipe-stats">
+                                    @if (job.TokenCount > 0)
+                                    {
+                                        @($"{job.TokenCount:N0} tokens · {job.ChunkCount} chunk{(job.ChunkCount != 1 ? "s" : "")} → GPT-4.1")
+                                    }
+                                    else
+                                    {
+                                        @("Vision mode → GPT-4.1")
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- Compact card -->
+                        <div class="job-item @job.Status.ToString().ToLower() afi">
+                            <div class="job-status-icon @job.Status.ToString().ToLower()">
+                                @switch (job.Status)
+                                {
+                                    case JobStatus.Queued:
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+                                        break;
+                                    case JobStatus.Done:
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20,6 9,17 4,12"/></svg>
+                                        break;
+                                    case JobStatus.Failed:
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                        break;
+                                }
+                            </div>
+                            <div class="job-name">
+                                <div class="job-filename">@job.FileName</div>
+                                <div class="job-stage">
+                                    @if (job.Status == JobStatus.Failed && job.ErrorMessage is not null)
+                                    {
+                                        <span style="color:var(--error)">@job.ErrorMessage</span>
+                                    }
+                                    else
+                                    {
+                                        @job.Stage
+                                    }
+                                </div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <div class="job-time">@FormatSize(job.FileSize)</div>
+                                @if (job.Status == JobStatus.Done && job.ResultId is not null)
+                                {
+                                    <button class="btn btn-sm btn-secondary" @onclick='() => Nav.NavigateTo($"/results/{job.ResultId}")'>
+                                        View
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+</div>
+
+@code {
+    static readonly string[] _stepLabels = ["Parse", "Extract Text", "Chunk", "AI Analysis", "Done"];
+
+    System.Timers.Timer? _ticker;
+    bool _dragOver;
+    bool _formatsExpanded;
+    IReadOnlyList<ProcessingJob> Jobs => Orchestrator.Jobs;
+    int ActiveCount => Jobs.Count(j => j.Status == JobStatus.Processing);
+
+    protected override void OnInitialized()
+    {
+        Orchestrator.StateChanged += OnStateChanged;
+
+        _ticker = new System.Timers.Timer(500);
+        _ticker.Elapsed += (_, _) => InvokeAsync(StateHasChanged);
+        _ticker.AutoReset = true;
+        _ticker.Start();
+    }
+
+    void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    async Task OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles(20))
+        {
+            await Orchestrator.EnqueueAsync(file);
+        }
+    }
+
+    void OnDragEnter() => _dragOver = true;
+    void OnDragLeave() => _dragOver = false;
+
+    static int GetActiveStep(string stage, JobStatus status) => stage switch
+    {
+        "Parsing file..."        => 0,
+        "Extracting content..."  => 1,
+        "Chunking document..."   => 2,
+        "Running AI analysis..." => 3,
+        "Complete"               => 4,
+        _                        => 0
+    };
+
+    static bool ShouldShowStats(ProcessingJob job)
+    {
+        var step = GetActiveStep(job.Stage, job.Status);
+        return step >= 3 || (job.TokenCount > 0 && step >= 2);
+    }
+
+    static string FormatElapsed(DateTime since)
+    {
+        var elapsed = DateTime.UtcNow - since;
+        if (elapsed.TotalMinutes >= 1)
+            return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+        return $"{(int)elapsed.TotalSeconds}s";
+    }
+
+    static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / 1024.0 / 1024.0:F1} MB";
+    }
+
+    public void Dispose()
+    {
+        Orchestrator.StateChanged -= OnStateChanged;
+        _ticker?.Stop();
+        _ticker?.Dispose();
+    }
+}

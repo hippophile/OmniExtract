@@ -1,0 +1,143 @@
+@page "/results"
+@inject ResultsRepository Repo
+@inject NavigationManager Nav
+
+<PageTitle>Results — OmniExtract</PageTitle>
+
+<header class="topbar">
+    <span class="topbar-title">Results</span>
+    <span class="topbar-sep">/</span>
+    <span class="topbar-sub">@_filtered.Count document@(_filtered.Count == 1 ? "" : "s")</span>
+    <div class="topbar-right">
+        <button class="btn btn-primary btn-sm" @onclick='() => Nav.NavigateTo("/upload")'>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Extraction
+        </button>
+    </div>
+</header>
+
+<div class="page-content afu">
+
+    <!-- Filter row -->
+    <div class="filter-row">
+        <div class="search-wrap">
+            <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="search-inp" type="text" placeholder="Search by name, type, or domain…" @bind="_search" @bind:event="oninput" />
+        </div>
+        @foreach (var d in _domains)
+        {
+            <button class="filter-chip @(_activeDomain == d ? "active" : "")" @onclick="() => ToggleDomain(d)">@Capitalize(d)</button>
+        }
+        @if (_activeDomain != null)
+        {
+            <button class="btn btn-sm btn-ghost" @onclick="() => _activeDomain = null">Clear</button>
+        }
+    </div>
+
+    <!-- Grid -->
+    @if (_filtered.Any())
+    {
+        <div class="result-grid">
+            @foreach (var entry in _filtered)
+            {
+                var conf = entry.Output.Meta.Confidence * 100;
+                <div class="result-card afu" @onclick='() => Nav.NavigateTo($"/results/{entry.Id}")'>
+                    <div class="rc-head">
+                        <div class="rc-icon">
+                            @((MarkupString)DocIcon(entry.Output.Categories.Domain))
+                        </div>
+                        <div>
+                            <div class="rc-name">@entry.Output.Meta.DocumentType</div>
+                            <div class="rc-type">@TruncateName(entry.FileName)</div>
+                        </div>
+                    </div>
+                    <div class="tag-list">
+                        @foreach (var tag in entry.Output.Tags.Take(4))
+                        {
+                            <span class="tag">@tag</span>
+                        }
+                        @if (entry.Output.Tags.Count > 4)
+                        {
+                            <span class="tag">+@(entry.Output.Tags.Count - 4)</span>
+                        }
+                    </div>
+                    <div class="rc-foot">
+                        <div class="badge @entry.Output.Categories.Sensitivity">
+                            <div class="badge-dot"></div>
+                            @entry.Output.Categories.Sensitivity
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="font-size:11px;color:var(--text-300);">@TimeAgo(entry.ProcessedAt)</span>
+                            <span class="rc-conf" style="color:@ConfColor(conf)">@conf.ToString("F0")%</span>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="empty">
+            <div class="empty-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <div class="empty-title">No results found</div>
+            <div class="empty-sub">Try a different search term or clear the filter.</div>
+        </div>
+    }
+
+</div>
+
+@code {
+    string _search = "";
+    string? _activeDomain;
+    IReadOnlyList<ResultsEntry> _all = [];
+    List<string> _domains = [];
+
+    List<ResultsEntry> _filtered => _all
+        .Where(e =>
+            (string.IsNullOrWhiteSpace(_search) ||
+             e.FileName.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+             e.Output.Meta.DocumentType.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+             e.Output.Categories.Domain.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+             e.Output.Tags.Any(t => t.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+            &&
+            (_activeDomain == null || e.Output.Categories.Domain == _activeDomain)
+        )
+        .ToList();
+
+    protected override void OnInitialized()
+    {
+        _all = Repo.GetAll();
+        _domains = _all.Select(e => e.Output.Categories.Domain).Distinct().OrderBy(d => d).ToList();
+    }
+
+    void ToggleDomain(string d) => _activeDomain = _activeDomain == d ? null : d;
+
+    static string Capitalize(string s) =>
+        string.IsNullOrEmpty(s) ? s : char.ToUpper(s[0]) + s[1..];
+
+    static string TruncateName(string s) =>
+        s.Length > 40 ? s[..38] + "…" : s;
+
+    static string TimeAgo(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 2)  return "just now";
+        if (diff.TotalHours < 1)    return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalDays < 1)     return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7)     return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("d MMM");
+    }
+
+    static string ConfColor(double pct) => pct >= 90 ? "var(--success)" : pct >= 75 ? "var(--warning)" : "var(--error)";
+
+    static string DocIcon(string domain) => domain switch
+    {
+        "finance"   => "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/></svg>",
+        "hr"        => "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/></svg>",
+        "legal"     => "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>",
+        "technical" => "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><line x1='8' y1='21' x2='16' y2='21'/><line x1='12' y1='17' x2='12' y2='21'/></svg>",
+        _           => "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><polyline points='14,2 14,8 20,8'/></svg>",
+    };
+}

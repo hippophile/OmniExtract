@@ -1,0 +1,62 @@
+@inherits LayoutComponentBase
+
+<div class="app-layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="sidebar-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                    <line x1="12" y1="18" x2="12" y2="12"/>
+                    <line x1="9"  y1="15" x2="15" y2="15"/>
+                </svg>
+            </div>
+            <div class="sidebar-brand-text">
+                <span class="sidebar-brand-name">OmniExtract</span>
+                <span class="sidebar-brand-sub">Document Intelligence</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <span class="nav-section-label">Workspace</span>
+            <NavLink class="nav-item" href="/" Match="NavLinkMatch.All">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                    <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                </svg>
+                Dashboard
+            </NavLink>
+            <NavLink class="nav-item" href="/upload">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="16,16 12,12 8,16"/>
+                    <line x1="12" y1="12" x2="12" y2="21"/>
+                    <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+                </svg>
+                Extract Documents
+            </NavLink>
+            <NavLink class="nav-item" href="/results">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10,9 9,9 8,9"/>
+                </svg>
+                Results
+            </NavLink>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-version">v1.0.0</div>
+        </div>
+    </aside>
+
+    <div class="main-pane">
+        @Body
+    </div>
+</div>
+
+<div id="blazor-error-ui" class="blazor-error-boundary" style="display:none;position:fixed;bottom:20px;left:calc(var(--sidebar-width) + 20px);right:20px;z-index:999;">
+    An unhandled error occurred.
+    <a href="" class="btn btn-sm btn-ghost" style="margin-left:12px;">Reload</a>
+</div>
