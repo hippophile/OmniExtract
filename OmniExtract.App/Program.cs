@@ -54,16 +54,9 @@ if (paths.Length == 0)
     return 1;
 }
 
-var target = paths[0];
-
-if (!File.Exists(target) && !Directory.Exists(target))
-{
-    Console.Error.WriteLine($"ERROR: Path does not exist: {target}");
-    return 1;
-}
-
 if (watchMode)
 {
+    var target = paths[0];
     if (!Directory.Exists(target))
     {
         Console.Error.WriteLine($"ERROR: Watch mode requires a directory path.");
@@ -71,13 +64,20 @@ if (watchMode)
     }
     await RunWatchMode(target, cts.Token);
 }
-else if (Directory.Exists(target))
-{
-    await RunFolderMode(target, cts.Token);
-}
 else
 {
-    await ProcessFile(target, cts.Token);
+    foreach (var target in paths)
+    {
+        if (!File.Exists(target) && !Directory.Exists(target))
+        {
+            Console.Error.WriteLine($"ERROR: Path does not exist: {target}");
+            continue;
+        }
+        if (Directory.Exists(target))
+            await RunFolderMode(target, cts.Token);
+        else
+            await ProcessFile(target, cts.Token);
+    }
 }
 
 return 0;
