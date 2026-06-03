@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Hosting;
 using OmniExtract.Core.Models;
 
 namespace OmniExtract.Web.Services;
@@ -21,9 +22,12 @@ public class ResultsEntry
 public class ResultsRepository
 {
     private readonly List<ResultsEntry> _entries = [];
+    private readonly string _uploadsPath;
 
-    public ResultsRepository()
+    public ResultsRepository(IWebHostEnvironment env)
     {
+        _uploadsPath = Path.Combine(env.WebRootPath, "uploads");
+
         var mocks = MockDataService.GetMockResults();
         for (var i = 0; i < mocks.Count; i++)
         {
@@ -57,6 +61,24 @@ public class ResultsRepository
         };
         _entries.Insert(0, entry);
         return entry;
+    }
+
+    public bool Delete(string id)
+    {
+        var entry = _entries.FirstOrDefault(e => e.Id == id);
+        if (entry is null) return false;
+        _entries.Remove(entry);
+        if (entry.OriginalFileUrl is not null)
+        {
+            try
+            {
+                var fileName = Path.GetFileName(entry.OriginalFileUrl);
+                var filePath = Path.Combine(_uploadsPath, fileName);
+                if (File.Exists(filePath)) File.Delete(filePath);
+            }
+            catch { }
+        }
+        return true;
     }
 
     public void Rate(string id, ExtractionRating rating)

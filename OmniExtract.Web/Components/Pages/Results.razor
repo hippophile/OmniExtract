@@ -57,7 +57,7 @@
             </div>
         }
 
-        <!-- Row 4: date presets + clear all -->
+        <!-- Row 4: date presets + sort + clear -->
         <div class="filter-row" style="padding-top:0;border-top:none;">
             <span style="font-size:11px;color:var(--text-400);white-space:nowrap;align-self:center;">Date</span>
             @foreach (var preset in new[] { "all", "today", "last7", "last30" })
@@ -66,6 +66,9 @@
                     @(preset switch { "all" => "All time", "today" => "Today", "last7" => "Last 7 days", "last30" => "Last 30 days", _ => preset })
                 </button>
             }
+            <span style="font-size:11px;color:var(--text-400);white-space:nowrap;align-self:center;margin-left:12px;">Sort</span>
+            <button class="filter-chip @(_sortBy == "date" ? "active" : "")" @onclick='() => _sortBy = "date"'>Newest</button>
+            <button class="filter-chip @(_sortBy == "confidence" ? "active" : "")" @onclick='() => _sortBy = "confidence"'>Confidence ↓</button>
             @if (_anyFilterActive)
             {
                 <button class="btn btn-sm btn-ghost" style="margin-left:8px;" @onclick="ClearAllFilters">
@@ -102,7 +105,13 @@
         <div class="result-grid">
             @foreach (var entry in _filtered)
             {
-                <div class="result-card afu" @onclick='() => Nav.NavigateTo($"/results/{entry.Id}")'>
+                <div class="result-card afu" @onclick='() => Nav.NavigateTo($"/results/{entry.Id}")' style="position:relative;">
+                    <!-- Delete button -->
+                    <button class="rc-delete" title="Delete"
+                            @onclick="() => DeleteEntry(entry.Id)" @onclick:stopPropagation="true">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                    </button>
+
                     @if (entry.IsFailed)
                     {
                         <div class="rc-head">
@@ -184,30 +193,33 @@
     string? _activeDocType;
     string? _activeSensitivity;
     string _datePreset = "all";
+    string _sortBy = "date";
 
     IReadOnlyList<ResultsEntry> _all = [];
     List<string> _domains = [];
     List<string> _docTypes = [];
     List<string> _sensitivities = [];
 
-    List<ResultsEntry> _filtered => _all
-        .Where(e =>
-            // text search
-            (string.IsNullOrWhiteSpace(_search) ||
-             e.FileName.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
-             (!e.IsFailed && e.Output.Meta.DocumentType.Contains(_search, StringComparison.OrdinalIgnoreCase)) ||
-             (!e.IsFailed && e.Output.Categories.Domain.Contains(_search, StringComparison.OrdinalIgnoreCase)) ||
-             (!e.IsFailed && e.Output.Tags.Any(t => t.Contains(_search, StringComparison.OrdinalIgnoreCase))))
-            // domain
-            && (_activeDomain == null || (!e.IsFailed && e.Output.Categories.Domain == _activeDomain))
-            // document type
-            && (_activeDocType == null || (!e.IsFailed && e.Output.Meta.DocumentType == _activeDocType))
-            // sensitivity
-            && (_activeSensitivity == null || (!e.IsFailed && e.Output.Categories.Sensitivity == _activeSensitivity))
-            // date preset
-            && MatchesDatePreset(e.ProcessedAt)
-        )
-        .ToList();
+    List<ResultsEntry> _filtered
+    {
+        get
+        {
+            var q = _all.Where(e =>
+                (string.IsNullOrWhiteSpace(_search) ||
+                 e.FileName.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                 (!e.IsFailed && e.Output.Meta.DocumentType.Contains(_search, StringComparison.OrdinalIgnoreCase)) ||
+                 (!e.IsFailed && e.Output.Categories.Domain.Contains(_search, StringComparison.OrdinalIgnoreCase)) ||
+                 (!e.IsFailed && e.Output.Tags.Any(t => t.Contains(_search, StringComparison.OrdinalIgnoreCase))))
+                && (_activeDomain == null || (!e.IsFailed && e.Output.Categories.Domain == _activeDomain))
+                && (_activeDocType == null || (!e.IsFailed && e.Output.Meta.DocumentType == _activeDocType))
+                && (_activeSensitivity == null || (!e.IsFailed && e.Output.Categories.Sensitivity == _activeSensitivity))
+                && MatchesDatePreset(e.ProcessedAt));
+
+            return _sortBy == "confidence"
+                ? q.OrderByDescending(e => e.Output.Meta.Confidence).ToList()
+                : q.OrderByDescending(e => e.ProcessedAt).ToList();
+        }
+    }
 
     bool _anyFilterActive =>
         _activeDomain != null || _activeDocType != null || _activeSensitivity != null || _datePreset != "all";
@@ -216,13 +228,21 @@
     int _badCount  => _all.Count(e => e.Rating == ExtractionRating.Bad);
     int _ratedCount => _goodCount + _badCount;
 
-    protected override void OnInitialized()
+    protected override void OnInitialized() => Refresh();
+
+    void Refresh()
     {
         _all = Repo.GetAll();
         var nonFailed = _all.Where(e => !e.IsFailed).ToList();
         _domains = nonFailed.Select(e => e.Output.Categories.Domain).Distinct().OrderBy(d => d).ToList();
         _docTypes = nonFailed.Select(e => e.Output.Meta.DocumentType).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().OrderBy(t => t).ToList();
         _sensitivities = nonFailed.Select(e => e.Output.Categories.Sensitivity).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().OrderBy(s => s).ToList();
+    }
+
+    void DeleteEntry(string id)
+    {
+        Repo.Delete(id);
+        Refresh();
     }
 
     bool MatchesDatePreset(DateTime processedAt)
