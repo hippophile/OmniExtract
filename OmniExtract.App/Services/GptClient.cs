@@ -34,12 +34,13 @@ public class GptClient : IAsyncDisposable
 
     public async Task<GptCallResult> CallWithMetadataAsync(List<GptMessage> messages, float temperature = 0, int? maxTokens = null, CancellationToken ct = default, string? model = null)
     {
-        for (var attempt = 0; attempt < 5; attempt++)
+        const int MaxAttempts = 8;
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
             try
             {
                 await _semaphore.WaitAsync(ct);
-                _logger.LogInformation("  GPT: calling API (attempt {Attempt}/5, {MsgCount} messages)...", attempt + 1, messages.Count);
+                _logger.LogInformation("  GPT: calling API (attempt {Attempt}/{Max}, {MsgCount} messages)...", attempt + 1, MaxAttempts, messages.Count);
 
                 try
                 {
@@ -57,19 +58,19 @@ public class GptClient : IAsyncDisposable
             }
             catch (Exception ex) when (IsRateLimit(ex))
             {
-                var wait = Math.Min(30d * (attempt + 1), 60d);
-                _logger.LogWarning("Rate limit; waiting {Wait}s ({Attempt}/5)", Math.Round(wait), attempt + 1);
+                var wait = Math.Min(30d * (attempt + 1), 120d);
+                _logger.LogWarning("Rate limit; waiting {Wait}s ({Attempt}/{Max})", Math.Round(wait), attempt + 1, MaxAttempts);
                 await Task.Delay(TimeSpan.FromSeconds(wait), ct);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                _logger.LogWarning("GPT call timed out on attempt {Attempt}/5, retrying...", attempt + 1);
+                _logger.LogWarning("GPT call timed out on attempt {Attempt}/{Max}, retrying...", attempt + 1, MaxAttempts);
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
             catch (Exception ex) when (IsOverloaded(ex))
             {
                 var wait = 20d * (attempt + 1);
-                _logger.LogWarning("Overloaded; waiting {Wait}s ({Attempt}/5)", wait, attempt + 1);
+                _logger.LogWarning("Overloaded; waiting {Wait}s ({Attempt}/{Max})", wait, attempt + 1, MaxAttempts);
                 await Task.Delay(TimeSpan.FromSeconds(wait), ct);
             }
             catch (Exception ex) when (IsContextLimitExceeded(ex))
@@ -79,12 +80,12 @@ public class GptClient : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "GPT API call failed on attempt {Attempt}", attempt + 1);
+                _logger.LogError(ex, "GPT API call failed on attempt {Attempt}/{Max}", attempt + 1, MaxAttempts);
                 throw;
             }
         }
 
-        throw new InvalidOperationException("GPT call failed after max retries");
+        throw new InvalidOperationException($"GPT call failed after {MaxAttempts} retries");
     }
 
     private async Task<GptCallResult> ExecuteAsync(List<GptMessage> messages, string model, CancellationToken ct)

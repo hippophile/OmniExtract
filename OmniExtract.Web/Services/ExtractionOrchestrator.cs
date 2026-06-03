@@ -112,6 +112,9 @@ public class ExtractionOrchestrator
             job.StageStartedAt = DateTime.UtcNow;
             NotifyState();
 
+            // Brief pause to let the rate-limit window reset after extraction
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+
             var recommendation = await _extractionService.RecommendationPassAsync(result, ct);
             if (recommendation is not null)
                 result.Data["agent_recommendation"] = recommendation;
@@ -216,6 +219,7 @@ public class ExtractionOrchestrator
 
         merged.Meta.SourceFile = job.FileName;
 
+        await Task.Delay(TimeSpan.FromSeconds(5), ct);
         var archiveRec = await _extractionService.RecommendationPassAsync(merged, ct);
         if (archiveRec is not null)
             merged.Data["agent_recommendation"] = archiveRec;
