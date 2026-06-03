@@ -112,14 +112,15 @@ public class ExtractionOrchestrator
             job.StageStartedAt = DateTime.UtcNow;
             NotifyState();
 
-            // Brief pause to let the rate-limit window reset after extraction
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
-
-            var recommendation = await _extractionService.RecommendationPassAsync(result, ct);
+            // Recommendation is best-effort: short timeout, no long retries
+            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            using var recCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            recCts.CancelAfter(TimeSpan.FromSeconds(45));
+            var recommendation = await _extractionService.RecommendationPassAsync(result, recCts.Token);
             if (recommendation is not null)
                 result.Data["agent_recommendation"] = recommendation;
             else
-                result.Meta.Warnings.Add("Agent recommendation pass failed — result saved without recommendation.");
+                result.Meta.Warnings.Add("Agent recommendation pass skipped.");
 
             job.Result = result;
             job.Status = JobStatus.Done;
@@ -219,8 +220,10 @@ public class ExtractionOrchestrator
 
         merged.Meta.SourceFile = job.FileName;
 
-        await Task.Delay(TimeSpan.FromSeconds(5), ct);
-        var archiveRec = await _extractionService.RecommendationPassAsync(merged, ct);
+        await Task.Delay(TimeSpan.FromSeconds(3), ct);
+        using var archiveRecCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        archiveRecCts.CancelAfter(TimeSpan.FromSeconds(45));
+        var archiveRec = await _extractionService.RecommendationPassAsync(merged, archiveRecCts.Token);
         if (archiveRec is not null)
             merged.Data["agent_recommendation"] = archiveRec;
         else

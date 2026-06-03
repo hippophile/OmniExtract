@@ -621,9 +621,14 @@ public class ExtractionService
             var cleaned = LineCommentRegex.Replace(response, string.Empty);
             return JsonSerializer.Deserialize<Dictionary<string, object?>>(cleaned, JsonOpts);
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Recommendation pass timed out — skipping");
+            return null;
+        }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Recommendation pass failed");
+            _logger.LogWarning(ex, "Recommendation pass failed — skipping");
             return null;
         }
     }
