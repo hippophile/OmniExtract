@@ -59,7 +59,7 @@ public class GptClient : IAsyncDisposable
             catch (Exception ex) when (IsRateLimit(ex))
             {
                 var wait = Math.Min(30d * (attempt + 1), 120d);
-                _logger.LogWarning("Rate limit; waiting {Wait}s ({Attempt}/{Max})", Math.Round(wait), attempt + 1, MaxAttempts);
+                _logger.LogWarning("Rate limit ({Type}); waiting {Wait}s ({Attempt}/{Max})", ex.GetType().Name, Math.Round(wait), attempt + 1, MaxAttempts);
                 await Task.Delay(TimeSpan.FromSeconds(wait), ct);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -80,7 +80,7 @@ public class GptClient : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "GPT API call failed on attempt {Attempt}/{Max}", attempt + 1, MaxAttempts);
+                _logger.LogError(ex, "GPT API call failed on attempt {Attempt}/{Max} [{Type}]: {Msg}", attempt + 1, MaxAttempts, ex.GetType().Name, ex.Message);
                 throw;
             }
         }
@@ -177,7 +177,13 @@ public class GptClient : IAsyncDisposable
     private static bool IsRateLimit(Exception ex)
     {
         var err = ex.ToString();
-        return err.Contains("429") || err.Contains("rate", StringComparison.OrdinalIgnoreCase);
+        return err.Contains("429")
+            || err.Contains("rate", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("exhausted", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("quota", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("throttl", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("too many", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsOverloaded(Exception ex)
