@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OmniExtract.Core.Models;
@@ -6,7 +7,11 @@ namespace OmniExtract.App.Services;
 
 public class OutputWriter
 {
-    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private readonly ILogger<OutputWriter> _logger;
 
     public OutputWriter(ILogger<OutputWriter> logger)

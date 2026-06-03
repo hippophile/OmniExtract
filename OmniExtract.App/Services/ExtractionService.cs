@@ -256,7 +256,7 @@ public class ExtractionService
             var ra = await CallWithHalvingAsync(ma, a, systemMsg, chunkNum, totalChunks, ct, depth + 1);
             var rb = await CallWithHalvingAsync(mb, b, systemMsg, chunkNum, totalChunks, ct, depth + 1);
             var merged = MergeResults([ParseResponse(ra, "text"), ParseResponse(rb, "text")]);
-            return System.Text.Json.JsonSerializer.Serialize(merged);
+            return System.Text.Json.JsonSerializer.Serialize(merged, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         }
     }
 

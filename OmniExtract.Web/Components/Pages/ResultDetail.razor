@@ -112,7 +112,14 @@ else
                     <div class="detail-meta-row">
                         <span class="detail-meta-item">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
-                            @_entry.FileName
+                            @if (_entry.OriginalFileUrl is not null)
+                            {
+                                <a href="@_entry.OriginalFileUrl" target="_blank" style="color:inherit;text-decoration:underline;text-underline-offset:3px;">@_entry.FileName</a>
+                            }
+                            else
+                            {
+                                @_entry.FileName
+                            }
                         </span>
                         <span class="detail-meta-item">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
@@ -352,7 +359,11 @@ else
         {
             _json = System.Text.Json.JsonSerializer.Serialize(
                 _entry.Output,
-                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                });
         }
     }
 

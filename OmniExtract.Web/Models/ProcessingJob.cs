@@ -18,6 +18,7 @@ public class ProcessingJob
     public string TempPath { get; set; } = string.Empty;
     public string Stage { get; set; } = "Queued";
     public string? ResultId { get; set; }
+    public string? UploadedFileUrl { get; set; }
     public DateTime StageStartedAt { get; set; } = DateTime.UtcNow;
     public int TokenCount { get; set; }
     public int ChunkCount { get; set; }

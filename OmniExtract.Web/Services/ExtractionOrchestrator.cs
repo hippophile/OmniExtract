@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Hosting;
 using OmniExtract.App.Services;
 using OmniExtract.Web.Models;
 
@@ -11,6 +12,7 @@ public class ExtractionOrchestrator
     private readonly ResultsRepository _resultsRepository;
     private readonly TokenCounter _tokenCounter;
     private readonly ArchiveHandler _archiveHandler;
+    private readonly IWebHostEnvironment _env;
     private readonly ILogger<ExtractionOrchestrator> _logger;
 
     private readonly List<ProcessingJob> _jobs = [];
@@ -25,6 +27,7 @@ public class ExtractionOrchestrator
         ResultsRepository resultsRepository,
         TokenCounter tokenCounter,
         ArchiveHandler archiveHandler,
+        IWebHostEnvironment env,
         ILogger<ExtractionOrchestrator> logger)
     {
         _documentProcessor = documentProcessor;
@@ -32,6 +35,7 @@ public class ExtractionOrchestrator
         _resultsRepository = resultsRepository;
         _tokenCounter = tokenCounter;
         _archiveHandler = archiveHandler;
+        _env = env;
         _logger = logger;
     }
 
@@ -45,11 +49,20 @@ public class ExtractionOrchestrator
         await using (var stream = file.OpenReadStream(maxAllowedSize: 100L * 1024 * 1024, ct))
             await stream.CopyToAsync(fs, ct);
 
+        // Save a persistent copy so the file can be opened from the result detail page
+        var uploadsDir = Path.Combine(_env.WebRootPath, "uploads");
+        Directory.CreateDirectory(uploadsDir);
+        var ext = Path.GetExtension(file.Name);
+        var savedName = Guid.NewGuid().ToString("N") + ext;
+        var savedPath = Path.Combine(uploadsDir, savedName);
+        File.Copy(tempPath, savedPath);
+
         var job = new ProcessingJob
         {
             FileName = file.Name,
             FileSize = file.Size,
-            TempPath = tempPath
+            TempPath = tempPath,
+            UploadedFileUrl = $"/uploads/{savedName}"
         };
 
         _jobs.Insert(0, job);
@@ -97,7 +110,7 @@ public class ExtractionOrchestrator
             job.Stage = "Complete";
             job.CompletedAt = DateTime.UtcNow;
 
-            var entry = _resultsRepository.Add(job.FileName, result);
+            var entry = _resultsRepository.Add(job.FileName, result, job.UploadedFileUrl);
             job.ResultId = entry.Id;
             NotifyState();
         }
@@ -170,7 +183,7 @@ public class ExtractionOrchestrator
         job.Stage = "Complete";
         job.CompletedAt = DateTime.UtcNow;
 
-        var entry = _resultsRepository.Add(job.FileName, merged);
+        var entry = _resultsRepository.Add(job.FileName, merged, job.UploadedFileUrl);
         job.ResultId = entry.Id;
         NotifyState();
     }

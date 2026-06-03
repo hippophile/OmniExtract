@@ -15,6 +15,7 @@ public class ResultsEntry
     public string? ErrorMessage { get; set; }
     public string? ErrorDetail { get; set; }
     public ExtractionRating Rating { get; set; } = ExtractionRating.Unrated;
+    public string? OriginalFileUrl { get; set; }
 }
 
 public class ResultsRepository
@@ -44,14 +45,15 @@ public class ResultsRepository
     public ResultsEntry? GetById(string id) =>
         _entries.FirstOrDefault(e => e.Id == id);
 
-    public ResultsEntry Add(string fileName, UniversalOutput output)
+    public ResultsEntry Add(string fileName, UniversalOutput output, string? fileUrl = null)
     {
         var entry = new ResultsEntry
         {
             FileName = fileName,
             Output = output,
             ProcessedAt = DateTime.UtcNow,
-            IsMock = false
+            IsMock = false,
+            OriginalFileUrl = fileUrl
         };
         _entries.Insert(0, entry);
         return entry;
