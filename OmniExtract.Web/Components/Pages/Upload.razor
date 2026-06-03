@@ -38,7 +38,7 @@
             </svg>
         </div>
         <div class="upload-headline">Drop files here or click to browse</div>
-        <div class="upload-sub">Maximum 100 MB per file. All document types supported.</div>
+        <div class="upload-sub">Drop or select files to queue them instantly. Open the dialog multiple times to add more.</div>
         <button class="fmt-toggle" @onclick="() => _formatsExpanded = !_formatsExpanded" type="button">
             @(_formatsExpanded ? "Hide formats ▴" : "Supported formats ▾")
         </button>
@@ -103,7 +103,10 @@
                                     }
                                 }
                             </div>
-                            <div class="pipe-detail">@job.Stage</div>
+                            <div class="pipe-detail" style="display:flex;align-items:center;gap:10px;">
+                                <span style="flex:1">@job.Stage</span>
+                                <button class="btn btn-sm btn-danger" @onclick="() => Orchestrator.CancelJobAsync(job.Id)">Stop</button>
+                            </div>
                             @if (ShouldShowStats(job))
                             {
                                 <div class="pipe-stats">
@@ -135,6 +138,9 @@
                                     case JobStatus.Failed:
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                         break;
+                                    case JobStatus.Cancelled:
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                                        break;
                                 }
                             </div>
                             <div class="job-name" style="flex:1;min-width:0;">
@@ -164,12 +170,24 @@
                                 }
                             </div>
                             <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+                                @if (job.FileSize >= 50L * 1024 * 1024)
+                                {
+                                    <span class="staged-warn" title="Large file — may be slow or require chunking">⚠ Large</span>
+                                }
                                 <div class="job-time">@FormatSize(job.FileSize)</div>
                                 @if ((job.Status == JobStatus.Done || job.Status == JobStatus.Failed) && job.ResultId is not null)
                                 {
                                     <button class="btn btn-sm btn-secondary" @onclick='() => Nav.NavigateTo($"/results/{job.ResultId}")'>
                                         View
                                     </button>
+                                }
+                                @if (job.Status == JobStatus.Queued)
+                                {
+                                    <button class="btn btn-sm btn-ghost" @onclick="() => Orchestrator.RemoveJobAsync(job.Id)">Remove</button>
+                                }
+                                @if (job.Status is JobStatus.Done or JobStatus.Failed or JobStatus.Cancelled)
+                                {
+                                    <button class="btn btn-sm btn-ghost" @onclick="() => Orchestrator.RemoveJobAsync(job.Id)">Delete</button>
                                 }
                             </div>
                         </div>
@@ -208,10 +226,8 @@
 
     async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
-        foreach (var file in e.GetMultipleFiles(20))
-        {
+        foreach (var file in e.GetMultipleFiles(100))
             await Orchestrator.EnqueueAsync(file);
-        }
     }
 
     void OnDragEnter() => _dragOver = true;
@@ -224,6 +240,7 @@
         "Chunking document..."   => 2,
         "Running AI analysis..." => 3,
         "Complete"               => 4,
+        "Cancelled"              => 0,
         _                        => 0
     };
 

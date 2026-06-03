@@ -2,7 +2,7 @@ using OmniExtract.Core.Models;
 
 namespace OmniExtract.Web.Models;
 
-public enum JobStatus { Queued, Processing, Done, Failed }
+public enum JobStatus { Queued, Processing, Done, Failed, Cancelled }
 
 public class ProcessingJob
 {
@@ -19,6 +19,7 @@ public class ProcessingJob
     public string Stage { get; set; } = "Queued";
     public string? ResultId { get; set; }
     public string? UploadedFileUrl { get; set; }
+    public CancellationTokenSource Cts { get; set; } = new();
     public DateTime StageStartedAt { get; set; } = DateTime.UtcNow;
     public int TokenCount { get; set; }
     public int ChunkCount { get; set; }

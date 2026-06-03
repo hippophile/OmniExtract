@@ -44,7 +44,7 @@ public class GptClient : IAsyncDisposable
                 try
                 {
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(240));
 
                     var result = await ExecuteAsync(messages, model ?? _settings.Model, timeoutCts.Token);
                     _logger.LogInformation("  GPT: response OK ({Length} chars)", result.Content.Length);

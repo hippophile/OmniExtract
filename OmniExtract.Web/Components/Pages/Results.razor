@@ -68,7 +68,7 @@
             }
             <span style="font-size:11px;color:var(--text-400);white-space:nowrap;align-self:center;margin-left:12px;">Sort</span>
             <button class="filter-chip @(_sortBy == "date" ? "active" : "")" @onclick='() => _sortBy = "date"'>Newest</button>
-            <button class="filter-chip @(_sortBy == "confidence" ? "active" : "")" @onclick='() => _sortBy = "confidence"'>Confidence ↓</button>
+            <button class="filter-chip @(_sortBy == "confidence" ? "active" : "")" @onclick="ToggleConfidenceSort">Confidence @(_sortBy == "confidence" ? (_confDesc ? "↓" : "↑") : "↓")</button>
             @if (_anyFilterActive)
             {
                 <button class="btn btn-sm btn-ghost" style="margin-left:8px;" @onclick="ClearAllFilters">
@@ -194,6 +194,7 @@
     string? _activeSensitivity;
     string _datePreset = "all";
     string _sortBy = "date";
+    bool _confDesc = true;
 
     IReadOnlyList<ResultsEntry> _all = [];
     List<string> _domains = [];
@@ -215,9 +216,11 @@
                 && (_activeSensitivity == null || (!e.IsFailed && e.Output.Categories.Sensitivity == _activeSensitivity))
                 && MatchesDatePreset(e.ProcessedAt));
 
-            return _sortBy == "confidence"
-                ? q.OrderByDescending(e => e.Output.Meta.Confidence).ToList()
-                : q.OrderByDescending(e => e.ProcessedAt).ToList();
+            if (_sortBy == "confidence")
+                return _confDesc
+                    ? q.OrderByDescending(e => e.Output.Meta.Confidence).ToList()
+                    : q.OrderBy(e => e.Output.Meta.Confidence).ToList();
+            return q.OrderByDescending(e => e.ProcessedAt).ToList();
         }
     }
 
@@ -255,6 +258,12 @@
             "last30" => processedAt >= today.AddDays(-29),
             _        => true
         };
+    }
+
+    void ToggleConfidenceSort()
+    {
+        if (_sortBy == "confidence") _confDesc = !_confDesc;
+        else _sortBy = "confidence";
     }
 
     void ToggleDomain(string d)      => _activeDomain      = _activeDomain      == d ? null : d;

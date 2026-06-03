@@ -62,13 +62,14 @@ public class ExtractionOrchestrator
             FileName = file.Name,
             FileSize = file.Size,
             TempPath = tempPath,
-            UploadedFileUrl = $"/uploads/{savedName}"
+            UploadedFileUrl = $"/uploads/{savedName}",
+            Cts = new CancellationTokenSource()
         };
 
         _jobs.Insert(0, job);
         NotifyState();
 
-        _ = Task.Run(() => ProcessJobAsync(job, CancellationToken.None), CancellationToken.None);
+        _ = Task.Run(() => ProcessJobAsync(job, job.Cts.Token), CancellationToken.None);
     }
 
     private async Task ProcessJobAsync(ProcessingJob job, CancellationToken ct)
@@ -114,6 +115,14 @@ public class ExtractionOrchestrator
             job.ResultId = entry.Id;
             NotifyState();
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Job {File} was cancelled", job.FileName);
+            job.Status = JobStatus.Cancelled;
+            job.Stage = "Cancelled";
+            job.CompletedAt = DateTime.UtcNow;
+            NotifyState();
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process {File}", job.FileName);
@@ -146,13 +155,30 @@ public class ExtractionOrchestrator
         await _archiveHandler.ExtractAsync(job.TempPath, async (memberPath, innerCt) =>
         {
             memberIndex++;
-            job.Stage = $"Processing file {memberIndex} of ?...";
+            var memberName = Path.GetFileName(memberPath);
+            job.Stage = $"Archive: {memberName} ({memberIndex})";
             job.StageStartedAt = DateTime.UtcNow;
             NotifyState();
 
-            var extracted = await _documentProcessor.ExtractAsync(memberPath, innerCt);
-            var result = await _extractionService.ExtractAsync(memberPath, extracted, innerCt);
-            memberResults.Add(result);
+            try
+            {
+                var extracted = await _documentProcessor.ExtractAsync(memberPath, innerCt);
+                var result = await _extractionService.ExtractAsync(memberPath, extracted, innerCt);
+                memberResults.Add(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Archive member failed: {File}", memberName);
+                memberResults.Add(new OmniExtract.Core.Models.UniversalOutput
+                {
+                    Meta = new OmniExtract.Core.Models.OutputMeta
+                    {
+                        SourceFile = memberName,
+                        ExtractionMethod = "failed",
+                        Warnings = [$"Member extraction failed: {ex.Message}"]
+                    }
+                });
+            }
         }, ct);
 
         OmniExtract.Core.Models.UniversalOutput merged;
@@ -185,6 +211,22 @@ public class ExtractionOrchestrator
 
         var entry = _resultsRepository.Add(job.FileName, merged, job.UploadedFileUrl);
         job.ResultId = entry.Id;
+        NotifyState();
+    }
+
+    public void CancelJobAsync(string id)
+    {
+        var job = _jobs.FirstOrDefault(j => j.Id == id);
+        job?.Cts.Cancel();
+    }
+
+    public void RemoveJobAsync(string id)
+    {
+        var job = _jobs.FirstOrDefault(j => j.Id == id);
+        if (job is null) return;
+        if (job.Status is JobStatus.Queued or JobStatus.Processing)
+            job.Cts.Cancel();
+        _jobs.Remove(job);
         NotifyState();
     }
 

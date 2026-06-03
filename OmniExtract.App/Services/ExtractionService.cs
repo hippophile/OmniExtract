@@ -139,20 +139,42 @@ public class ExtractionService
         _logger.LogInformation("Document too large — chunking...");
         const int InitialChunkChars = 80_000;
         var chunks = ChunkTextByChars(text, InitialChunkChars);
-        _logger.LogInformation("Split into {Count} chunks", chunks.Count);
+        _logger.LogInformation("Split into {Total} chunks", chunks.Count);
+
+        var largeDocWarning = chunks.Count > 8
+            ? $"Large document: {chunks.Count} API calls required, extraction may take ~{chunks.Count * 4} minutes."
+            : null;
 
         var results = new List<UniversalOutput>();
         for (var i = 0; i < chunks.Count; i++)
         {
             _logger.LogInformation("Processing chunk {I}/{Total}", i + 1, chunks.Count);
             var chunkText = chunks[i];
-            var prompt = chunks.Count > 1 ? $"[Chunk {i + 1} of {chunks.Count}]\n\n{chunkText}" : chunkText;
+            var prompt = $"[Chunk {i + 1} of {chunks.Count}]\n\n{chunkText}";
             var messages = new List<GptMessage> { systemMsg, new UserGptMessage(prompt) };
             var response = await CallWithHalvingAsync(messages, chunkText, systemMsg, i + 1, chunks.Count, ct);
             results.Add(ParseResponse(response, "text"));
         }
 
-        return MergeResults(results);
+        var merged = MergeResults(results);
+        if (largeDocWarning is not null)
+            merged.Meta.Warnings.Add(largeDocWarning);
+
+        if (chunks.Count > 1)
+        {
+            var synthesized = await SynthesisPassAsync(merged.Data, ct);
+            if (synthesized is not null)
+            {
+                merged.Data = synthesized;
+                merged.Meta.Warnings.Add("Synthesis pass applied.");
+            }
+            else
+            {
+                merged.Meta.Warnings.Add("Synthesis pass skipped — using programmatic merge.");
+            }
+        }
+
+        return merged;
     }
 
     private async Task<UniversalOutput> ExtractVisionAsync(List<string> images, CancellationToken ct)
@@ -232,11 +254,55 @@ public class ExtractionService
             Tags = results.SelectMany(r => r.Tags).Distinct().ToList(),
             Categories = first.Categories,
             Data = results.SelectMany(r => r.Data).GroupBy(kv => kv.Key)
-                .ToDictionary(g => g.Key, g => g.First().Value),
+                .ToDictionary(g => g.Key, g => g.FirstOrDefault(kv => kv.Value is not null).Value ?? g.First().Value),
             Tables = results.SelectMany(r => r.Tables).ToList()
         };
 
         return merged;
+    }
+
+    private const string SynthesisPrompt = """
+        You are a data consolidation engine. You have received partial extraction results
+        from multiple sections of the same document, merged into one JSON object.
+
+        Your task:
+        1. Deduplicate keys — if the same field appears with slightly different names, unify them.
+        2. Resolve contradictions — prefer the most specific, non-null value.
+        3. Fill gaps — if one section implies a value that another section makes explicit, use the explicit value.
+        4. Do NOT invent data. Only work with what is present.
+
+        Respond ONLY with a valid JSON object of the consolidated data fields.
+        No markdown, no commentary, no extra keys.
+        """;
+
+    private async Task<Dictionary<string, object?>?> SynthesisPassAsync(Dictionary<string, object?> data, CancellationToken ct)
+    {
+        string dataJson;
+        try { dataJson = JsonSerializer.Serialize(data); }
+        catch { return null; }
+
+        if (dataJson.Length > 80_000)
+        {
+            _logger.LogWarning("Merged data too large for synthesis pass ({Len} chars) — skipping", dataJson.Length);
+            return null;
+        }
+
+        try
+        {
+            var messages = new List<GptMessage>
+            {
+                new SystemGptMessage(SynthesisPrompt),
+                new UserGptMessage(dataJson)
+            };
+            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+            var cleaned = LineCommentRegex.Replace(response, string.Empty);
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(cleaned, JsonOpts);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Synthesis pass failed — falling back to programmatic merge");
+            return null;
+        }
     }
 
     private async Task<string> CallWithHalvingAsync(List<GptMessage> messages, string chunkText, SystemGptMessage systemMsg, int chunkNum, int totalChunks, CancellationToken ct, int depth = 0)
