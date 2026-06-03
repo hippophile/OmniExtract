@@ -2,6 +2,8 @@ using OmniExtract.Core.Models;
 
 namespace OmniExtract.Web.Services;
 
+public enum ExtractionRating { Unrated, Good, Bad }
+
 public class ResultsEntry
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
@@ -9,6 +11,10 @@ public class ResultsEntry
     public UniversalOutput Output { get; set; } = new();
     public DateTime ProcessedAt { get; set; }
     public bool IsMock { get; set; }
+    public bool IsFailed { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string? ErrorDetail { get; set; }
+    public ExtractionRating Rating { get; set; } = ExtractionRating.Unrated;
 }
 
 public class ResultsRepository
@@ -46,6 +52,29 @@ public class ResultsRepository
             Output = output,
             ProcessedAt = DateTime.UtcNow,
             IsMock = false
+        };
+        _entries.Insert(0, entry);
+        return entry;
+    }
+
+    public void Rate(string id, ExtractionRating rating)
+    {
+        var entry = _entries.FirstOrDefault(e => e.Id == id);
+        if (entry is null) return;
+        entry.Rating = entry.Rating == rating ? ExtractionRating.Unrated : rating;
+    }
+
+    public ResultsEntry AddFailed(string fileName, string errorMessage, string errorDetail)
+    {
+        var entry = new ResultsEntry
+        {
+            FileName = fileName,
+            Output = new UniversalOutput(),
+            ProcessedAt = DateTime.UtcNow,
+            IsMock = false,
+            IsFailed = true,
+            ErrorMessage = errorMessage,
+            ErrorDetail = errorDetail
         };
         _entries.Insert(0, entry);
         return entry;

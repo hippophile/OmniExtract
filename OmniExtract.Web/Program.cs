@@ -22,6 +22,7 @@ builder.Services.AddSingleton<OutputWriter>();
 
 builder.Services.AddSingleton<ResultsRepository>();
 builder.Services.AddSingleton<ExtractionOrchestrator>();
+builder.Services.AddScoped<ExportService>();
 
 var app = builder.Build();
 

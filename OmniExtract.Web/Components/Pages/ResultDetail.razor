@@ -1,13 +1,75 @@
 @page "/results/{Id}"
 @inject ResultsRepository Repo
 @inject NavigationManager Nav
+@inject ExportService ExportSvc
+@inject IJSRuntime JS
 
-<PageTitle>@(_entry?.Output.Meta.DocumentType ?? "Result") — OmniExtract</PageTitle>
+<PageTitle>@(_entry?.IsFailed == true ? "Failed Extraction" : _entry?.Output.Meta.DocumentType ?? "Result") — OmniExtract</PageTitle>
 
 @if (_entry is null)
 {
     <header class="topbar"><span class="topbar-title">Result</span></header>
     <div class="page-content"><div class="empty"><div class="empty-title">Result not found.</div></div></div>
+}
+else if (_entry.IsFailed)
+{
+    <header class="topbar">
+        <span class="topbar-title">Result Detail</span>
+        <span class="topbar-sep">/</span>
+        <span class="topbar-sub" style="color:var(--error)">Extraction Failed</span>
+        <div class="topbar-right">
+            <button class="btn btn-ghost btn-sm" @onclick='() => Nav.NavigateTo("/results")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
+                All Results
+            </button>
+        </div>
+    </header>
+
+    <div class="page-content afu">
+        <div class="detail-hero" style="background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);">
+            <div class="detail-hero-body">
+                <div class="detail-doc-icon" style="color:var(--error);">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </div>
+                <div style="flex:1;min-width:0;">
+                    <div class="detail-doc-type" style="color:var(--error);">Extraction Failed</div>
+                    <div class="detail-doc-name">@_entry.FileName</div>
+                    <div class="detail-meta-row">
+                        <span class="detail-meta-item">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+                            @_entry.ProcessedAt.ToString("d MMM yyyy, HH:mm")
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:24px;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.2);border-radius:10px;padding:20px 24px;">
+            <div style="font-size:13px;font-weight:600;color:var(--error);margin-bottom:8px;">Error</div>
+            <div style="font-size:14px;color:var(--text-100);">@_entry.ErrorMessage</div>
+        </div>
+
+        @if (_entry.ErrorDetail is not null)
+        {
+            <div style="margin-top:16px;">
+                <button class="section-toggle" @onclick='() => Toggle("errdetail")'>
+                    <span class="section-chevron">@(IsOpen("errdetail") ? "▾" : "▶")</span>
+                    <span class="section-toggle-title">Stack Trace</span>
+                </button>
+                @if (IsOpen("errdetail"))
+                {
+                    <pre style="margin-top:8px;font-size:11px;background:rgba(0,0,0,.35);color:var(--error);padding:16px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;" class="afi">@_entry.ErrorDetail</pre>
+                }
+            </div>
+        }
+
+        <div style="margin-top:32px;">
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/upload")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16,16 12,12 8,16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                Re-upload
+            </button>
+        </div>
+    </div>
 }
 else
 {
@@ -21,6 +83,14 @@ else
         <span class="topbar-sep">/</span>
         <span class="topbar-sub">@m.DocumentType</span>
         <div class="topbar-right">
+            <button class="btn btn-ghost btn-sm" @onclick="DownloadJson">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                JSON
+            </button>
+            <button class="btn btn-ghost btn-sm" @onclick="DownloadCsv">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                CSV
+            </button>
             <button class="btn btn-ghost btn-sm" @onclick='() => Nav.NavigateTo("/results")'>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
                 All Results
@@ -246,6 +316,21 @@ else
             </div>
         </div>
 
+        <!-- Rating -->
+        <div class="rating-bar afu">
+            <span class="rating-label">Was this extraction accurate?</span>
+            <button class="rating-btn @(_entry.Rating == ExtractionRating.Good ? "rating-good active" : "rating-good")"
+                    @onclick='() => { Repo.Rate(_entry.Id, ExtractionRating.Good); StateHasChanged(); }'>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="@(_entry.Rating == ExtractionRating.Good ? "currentColor" : "none")" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                Good
+            </button>
+            <button class="rating-btn @(_entry.Rating == ExtractionRating.Bad ? "rating-bad active" : "rating-bad")"
+                    @onclick='() => { Repo.Rate(_entry.Id, ExtractionRating.Bad); StateHasChanged(); }'>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="@(_entry.Rating == ExtractionRating.Bad ? "currentColor" : "none")" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+                Bad
+            </button>
+        </div>
+
     </div>
 }
 
@@ -270,6 +355,25 @@ else
                 new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
     }
+
+    async Task DownloadJson()
+    {
+        if (_entry is null) return;
+        var docType = Sanitize(_entry.Output.Meta.DocumentType);
+        await JS.InvokeVoidAsync("triggerDownload", $"{docType}-{_entry.Id}.json", "application/json", _json);
+    }
+
+    async Task DownloadCsv()
+    {
+        if (_entry is null) return;
+        var csv = ExportSvc.BuildCsv(_entry.Output);
+        var docType = Sanitize(_entry.Output.Meta.DocumentType);
+        await JS.InvokeVoidAsync("triggerDownload", $"{docType}-{_entry.Id}.csv", "text/csv", csv);
+    }
+
+    static string Sanitize(string name) =>
+        string.IsNullOrWhiteSpace(name) ? "result"
+            : new string(name.Select(c => char.IsLetterOrDigit(c) ? char.ToLower(c) : '-').ToArray()).Trim('-');
 
     static string DomainIconLarge(string domain) => domain switch
     {

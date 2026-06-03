@@ -137,7 +137,7 @@
                                         break;
                                 }
                             </div>
-                            <div class="job-name">
+                            <div class="job-name" style="flex:1;min-width:0;">
                                 <div class="job-filename">@job.FileName</div>
                                 <div class="job-stage">
                                     @if (job.Status == JobStatus.Failed && job.ErrorMessage is not null)
@@ -149,10 +149,23 @@
                                         @job.Stage
                                     }
                                 </div>
+                                @if (job.Status == JobStatus.Failed && job.ErrorDetail is not null)
+                                {
+                                    var jobId = job.Id;
+                                    var expanded = _expandedErrors.Contains(jobId);
+                                    <button class="btn btn-sm btn-ghost" style="margin-top:6px;font-size:11px;padding:2px 8px;"
+                                            @onclick="() => { if (!_expandedErrors.Remove(jobId)) _expandedErrors.Add(jobId); }">
+                                        Error detail @(expanded ? "▴" : "▾")
+                                    </button>
+                                    @if (expanded)
+                                    {
+                                        <pre style="margin-top:8px;font-size:11px;background:rgba(0,0,0,.35);color:var(--error);padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">@job.ErrorDetail</pre>
+                                    }
+                                }
                             </div>
-                            <div style="display:flex;align-items:center;gap:10px;">
+                            <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
                                 <div class="job-time">@FormatSize(job.FileSize)</div>
-                                @if (job.Status == JobStatus.Done && job.ResultId is not null)
+                                @if ((job.Status == JobStatus.Done || job.Status == JobStatus.Failed) && job.ResultId is not null)
                                 {
                                     <button class="btn btn-sm btn-secondary" @onclick='() => Nav.NavigateTo($"/results/{job.ResultId}")'>
                                         View
@@ -174,6 +187,7 @@
     System.Timers.Timer? _ticker;
     bool _dragOver;
     bool _formatsExpanded;
+    HashSet<string> _expandedErrors = [];
     IReadOnlyList<ProcessingJob> Jobs => Orchestrator.Jobs;
     int ActiveCount => Jobs.Count(j => j.Status == JobStatus.Processing);
 

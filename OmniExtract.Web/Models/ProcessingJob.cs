@@ -11,6 +11,7 @@ public class ProcessingJob
     public long FileSize { get; set; }
     public JobStatus Status { get; set; } = JobStatus.Queued;
     public string? ErrorMessage { get; set; }
+    public string? ErrorDetail { get; set; }
     public UniversalOutput? Result { get; set; }
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }

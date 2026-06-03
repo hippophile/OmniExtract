@@ -106,8 +106,11 @@ public class ExtractionOrchestrator
             _logger.LogError(ex, "Failed to process {File}", job.FileName);
             job.Status = JobStatus.Failed;
             job.ErrorMessage = ex.Message;
+            job.ErrorDetail = ex.ToString();
             job.Stage = "Failed";
             job.CompletedAt = DateTime.UtcNow;
+            var failedEntry = _resultsRepository.AddFailed(job.FileName, ex.Message, ex.ToString());
+            job.ResultId = failedEntry.Id;
             NotifyState();
         }
         finally
