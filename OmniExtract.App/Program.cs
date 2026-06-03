@@ -96,7 +96,7 @@ async Task ProcessFile(string filePath, CancellationToken ct)
     }
 
     var extracted = await processor.ExtractAsync(filePath, ct);
-    var output = await extraction.ExtractAsync(filePath, extracted, ct);
+    var output = await extraction.ExtractAsync(filePath, extracted, ct: ct);
     await writer.WriteAsync(filePath, output, ct);
 }
 

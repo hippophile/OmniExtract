@@ -1,0 +1,226 @@
+@page "/lab"
+@using OmniExtract.App.Services
+@using OmniExtract.Core.Models
+@inject DocumentProcessor DocumentProcessor
+@inject ExtractionService ExtractionService
+
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Test Lab</h1>
+        <p class="page-subtitle">Compare extraction approaches side-by-side on a single document</p>
+    </div>
+</div>
+
+<div class="page-content">
+    @if (!_running && _results == null)
+    {
+        <div class="lab-upload-zone">
+            <div class="lab-upload-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+                    <path d="M14 3v5h5"/>
+                    <path d="M14 3l5 5"/>
+                    <circle cx="18" cy="8" r="0"/>
+                    <path d="M18 14v6M15 17l3-3 3 3"/>
+                </svg>
+            </div>
+            <p class="lab-upload-title">Upload a document to run all three approaches</p>
+            <p class="lab-upload-sub">Approaches A (classify-first), B (adaptive prompt), and C (heuristic) run in parallel</p>
+            <label class="btn btn-primary lab-upload-btn">
+                Choose File
+                <InputFile OnChange="OnFileSelected" accept="*/*" style="display:none" />
+            </label>
+            @if (_selectedFileName is not null)
+            {
+                <p class="lab-selected-file">Selected: <strong>@_selectedFileName</strong></p>
+                <button class="btn btn-cta" @onclick="RunLab" disabled="@_running">Run Lab</button>
+            }
+            @if (_uploadError is not null)
+            {
+                <p class="lab-error">@_uploadError</p>
+            }
+        </div>
+    }
+
+    @if (_running)
+    {
+        <div class="lab-grid">
+            @foreach (var approach in _approachNames)
+            {
+                <div class="lab-col lab-col-loading">
+                    <div class="approach-badge approach-badge-@approach.Key">@approach.Key</div>
+                    <div class="lab-col-title">@approach.Value</div>
+                    <div class="lab-spinner">
+                        <div class="spinner"></div>
+                        <span>Running…</span>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (_results != null)
+    {
+        <div class="lab-toolbar">
+            <span class="lab-filename">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                </svg>
+                @_selectedFileName
+            </span>
+            <button class="btn btn-ghost" @onclick="RunAgain">Run Again</button>
+        </div>
+
+        <div class="lab-grid">
+            @foreach (var r in _results)
+            {
+                var key = r.ApproachName[0].ToString();
+                var disagrees = _results.Select(x => x.Classification).Distinct().Count() > 1;
+                <div class="lab-col">
+                    <div class="approach-badge approach-badge-@key">@key</div>
+                    <div class="lab-col-title">@r.ApproachName</div>
+
+                    @if (r.Error is not null)
+                    {
+                        <div class="lab-error-box">
+                            <strong>Error</strong>
+                            <p>@r.Error</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <table class="lab-stats-table">
+                            <tbody>
+                                <tr class="@(disagrees ? "lab-cell-diff" : "")">
+                                    <th>Classification</th>
+                                    <td><span class="lab-classification">@r.Classification</span></td>
+                                </tr>
+                                <tr>
+                                    <th>Confidence</th>
+                                    <td>@(r.Confidence < 0 ? "n/a" : r.Confidence.ToString("P0"))</td>
+                                </tr>
+                                <tr>
+                                    <th>Elapsed</th>
+                                    <td>@r.Elapsed.TotalSeconds.ToString("F1")s</td>
+                                </tr>
+                                <tr>
+                                    <th>Fields</th>
+                                    <td>@(r.Output?.Data.Count ?? 0)</td>
+                                </tr>
+                                <tr>
+                                    <th>Warnings</th>
+                                    <td>@(r.Output?.Meta.Warnings.Count ?? 0)</td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <button class="btn btn-ghost btn-sm lab-toggle-btn" @onclick="() => ToggleDetails(r.ApproachName)">
+                            @(_expanded.Contains(r.ApproachName) ? "Hide details" : "Show details")
+                        </button>
+
+                        @if (_expanded.Contains(r.ApproachName) && r.Output?.Data is not null)
+                        {
+                            <div class="lab-details">
+                                @foreach (var kv in r.Output.Data)
+                                {
+                                    <div class="lab-detail-row">
+                                        <span class="lab-detail-key">@kv.Key</span>
+                                        <span class="lab-detail-val">@(kv.Value?.ToString() ?? "—")</span>
+                                    </div>
+                                }
+                                @if (!r.Output.Data.Any())
+                                {
+                                    <p class="lab-empty">No data fields extracted.</p>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly Dictionary<string, string> _approachNames = new()
+    {
+        ["A"] = "A — Classify-first",
+        ["B"] = "B — Adaptive prompt",
+        ["C"] = "C — Heuristic",
+    };
+
+    private string? _selectedFileName;
+    private string? _tempFilePath;
+    private string? _uploadError;
+    private bool _running;
+    private List<LabApproachResult>? _results;
+    private readonly HashSet<string> _expanded = [];
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _uploadError = null;
+        var file = e.File;
+        _selectedFileName = file.Name;
+
+        try
+        {
+            var tmpPath = Path.Combine(Path.GetTempPath(), $"lab_{Guid.NewGuid()}{Path.GetExtension(file.Name)}");
+            await using var fs = new FileStream(tmpPath, FileMode.Create);
+            await using var stream = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024);
+            await stream.CopyToAsync(fs);
+            _tempFilePath = tmpPath;
+        }
+        catch (Exception ex)
+        {
+            _uploadError = $"Upload failed: {ex.Message}";
+        }
+    }
+
+    private async Task RunLab()
+    {
+        if (_tempFilePath is null) return;
+        _running = true;
+        _results = null;
+        _expanded.Clear();
+        StateHasChanged();
+
+        try
+        {
+            var extracted = await DocumentProcessor.ExtractAsync(_tempFilePath);
+            var text = extracted.Text ?? string.Empty;
+            var ext = Path.GetExtension(_tempFilePath);
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+
+            var taskA = ExtractionService.RunApproachAAsync(text, ext, cts.Token);
+            var taskB = ExtractionService.RunApproachBAsync(text, ext, cts.Token);
+            var taskC = ExtractionService.RunApproachCAsync(text, ext, cts.Token);
+
+            var all = await Task.WhenAll(taskA, taskB, taskC);
+            _results = [.. all];
+        }
+        catch (Exception ex)
+        {
+            _uploadError = $"Lab run failed: {ex.Message}";
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private void RunAgain()
+    {
+        _results = null;
+        _selectedFileName = null;
+        _tempFilePath = null;
+        _uploadError = null;
+        _expanded.Clear();
+    }
+
+    private void ToggleDetails(string name)
+    {
+        if (!_expanded.Add(name))
+            _expanded.Remove(name);
+    }
+}

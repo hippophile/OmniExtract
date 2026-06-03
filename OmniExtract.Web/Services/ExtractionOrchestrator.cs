@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Hosting;
 using OmniExtract.App.Services;
+using OmniExtract.Core.Models;
 using OmniExtract.Web.Models;
 
 namespace OmniExtract.Web.Services;
@@ -39,7 +40,7 @@ public class ExtractionOrchestrator
         _logger = logger;
     }
 
-    public async Task EnqueueAsync(IBrowserFile file, CancellationToken ct = default)
+    public async Task EnqueueAsync(IBrowserFile file, AnalysisMode mode = AnalysisMode.Standard, CancellationToken ct = default)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "omniextract-web", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -63,6 +64,7 @@ public class ExtractionOrchestrator
             FileSize = file.Size,
             TempPath = tempPath,
             UploadedFileUrl = $"/uploads/{savedName}",
+            AnalysisMode = mode,
             Cts = new CancellationTokenSource()
         };
 
@@ -104,7 +106,17 @@ public class ExtractionOrchestrator
             job.StageStartedAt = DateTime.UtcNow;
             NotifyState();
 
-            var result = await _extractionService.ExtractAsync(job.TempPath, extracted, ct);
+            var result = await _extractionService.ExtractAsync(job.TempPath, extracted, job.AnalysisMode, ct);
+
+            job.Stage = "Agent recommendation...";
+            job.StageStartedAt = DateTime.UtcNow;
+            NotifyState();
+
+            var recommendation = await _extractionService.RecommendationPassAsync(result, ct);
+            if (recommendation is not null)
+                result.Data["agent_recommendation"] = recommendation;
+            else
+                result.Meta.Warnings.Add("Agent recommendation pass failed — result saved without recommendation.");
 
             job.Result = result;
             job.Status = JobStatus.Done;
@@ -163,7 +175,7 @@ public class ExtractionOrchestrator
             try
             {
                 var extracted = await _documentProcessor.ExtractAsync(memberPath, innerCt);
-                var result = await _extractionService.ExtractAsync(memberPath, extracted, innerCt);
+                var result = await _extractionService.ExtractAsync(memberPath, extracted, job.AnalysisMode, innerCt);
                 memberResults.Add(result);
             }
             catch (Exception ex)
@@ -203,6 +215,12 @@ public class ExtractionOrchestrator
         }
 
         merged.Meta.SourceFile = job.FileName;
+
+        var archiveRec = await _extractionService.RecommendationPassAsync(merged, ct);
+        if (archiveRec is not null)
+            merged.Data["agent_recommendation"] = archiveRec;
+        else
+            merged.Meta.Warnings.Add("Agent recommendation pass failed — result saved without recommendation.");
 
         job.Result = merged;
         job.Status = JobStatus.Done;

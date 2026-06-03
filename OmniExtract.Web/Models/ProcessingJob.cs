@@ -23,4 +23,5 @@ public class ProcessingJob
     public DateTime StageStartedAt { get; set; } = DateTime.UtcNow;
     public int TokenCount { get; set; }
     public int ChunkCount { get; set; }
+    public AnalysisMode AnalysisMode { get; set; } = AnalysisMode.Standard;
 }

@@ -32,7 +32,7 @@ public class DocumentProcessor
         ".txt", ".md", ".rtf",
         ".csv", ".tsv",
         ".json", ".jsonl", ".yaml", ".yml", ".xml",
-        ".eml"
+        ".eml", ".ics"
     };
 
     private readonly ProcessingSettings _settings;
@@ -115,7 +115,7 @@ public class DocumentProcessor
 
     private ExtractionResult ExtractNative(string filePath, string ext) => ext switch
     {
-        ".txt" or ".md" or ".rtf" => new ExtractionResult { Text = ReadTextFile(filePath) },
+        ".txt" or ".md" or ".rtf" or ".ics" => new ExtractionResult { Text = ReadTextFile(filePath) },
         ".json" or ".jsonl" or ".yaml" or ".yml" or ".xml" => new ExtractionResult { Text = ReadTextFile(filePath) },
         ".csv" => ExtractCsv(filePath, ','),
         ".tsv" => ExtractCsv(filePath, '\t'),

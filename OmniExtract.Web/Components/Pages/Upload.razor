@@ -1,4 +1,5 @@
 @page "/upload"
+@using OmniExtract.Core.Models
 @inject ExtractionOrchestrator Orchestrator
 @inject NavigationManager Nav
 @implements IDisposable
@@ -54,6 +55,18 @@
         <InputFile OnChange="OnFilesSelected" multiple accept="*/*"
                    style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;" />
     </div>
+
+    <!-- Deep Analysis toggle -->
+    <label class="deep-analysis-toggle" title="Produces a distilled intelligence brief: findings, risks, key facts, and a one-page summary. Best for reports, contracts, and long-form documents.">
+        <input type="checkbox" @bind="_deepAnalysis" @onclick:stopPropagation="true" />
+        <span class="da-label">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            Deep Analysis
+        </span>
+        <span class="da-desc">Distil long-form documents into a prioritised findings brief (reports, contracts, etc.)</span>
+    </label>
 
     <!-- Job queue -->
     @if (Jobs.Any())
@@ -144,7 +157,13 @@
                                 }
                             </div>
                             <div class="job-name" style="flex:1;min-width:0;">
-                                <div class="job-filename">@job.FileName</div>
+                                <div class="job-filename" style="display:flex;align-items:center;gap:6px;">
+                                    @job.FileName
+                                    @if (job.AnalysisMode == AnalysisMode.DeepAnalysis)
+                                    {
+                                        <span class="da-badge">Deep Analysis</span>
+                                    }
+                                </div>
                                 <div class="job-stage">
                                     @if (job.Status == JobStatus.Failed && job.ErrorMessage is not null)
                                     {
@@ -205,6 +224,7 @@
     System.Timers.Timer? _ticker;
     bool _dragOver;
     bool _formatsExpanded;
+    bool _deepAnalysis;
     HashSet<string> _expandedErrors = [];
     IReadOnlyList<ProcessingJob> Jobs => Orchestrator.Jobs;
     int ActiveCount => Jobs.Count(j => j.Status == JobStatus.Processing);
@@ -226,8 +246,9 @@
 
     async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
+        var mode = _deepAnalysis ? AnalysisMode.DeepAnalysis : AnalysisMode.Standard;
         foreach (var file in e.GetMultipleFiles(100))
-            await Orchestrator.EnqueueAsync(file);
+            await Orchestrator.EnqueueAsync(file, mode);
     }
 
     void OnDragEnter() => _dragOver = true;

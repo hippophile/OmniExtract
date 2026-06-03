@@ -180,7 +180,179 @@ else
             <!-- Main column -->
             <div style="display:flex;flex-direction:column;gap:24px;">
 
-                <!-- Extracted fields -->
+                @{
+                    var hasDeepAnalysis = _entry.Output.Data.ContainsKey("distilled_findings");
+                    var hasNarrative    = !hasDeepAnalysis && _entry.Output.Data.ContainsKey("sections");
+                }
+
+                @if (hasDeepAnalysis)
+                {
+                    <!-- Deep Analysis layout -->
+                    @if (_entry.Output.Data.TryGetValue("one_page_summary", out var summaryObj) && summaryObj is not null)
+                    {
+                        <div class="da-summary-panel">
+                            <div class="da-panel-label">One-Page Summary</div>
+                            <p class="da-summary-text">@summaryObj.ToString()</p>
+                        </div>
+                    }
+
+                    @if (_entry.Output.Data.TryGetValue("distilled_findings", out var findingsObj) && findingsObj is not null)
+                    {
+                        <div>
+                            <button class="section-toggle" @onclick='() => Toggle("findings")'>
+                                <span class="section-chevron">@(IsOpen("findings") ? "▾" : "▶")</span>
+                                <span class="section-toggle-title">Key Findings</span>
+                            </button>
+                            @if (IsOpen("findings"))
+                            {
+                                <div class="da-findings-list">
+                                    @foreach (var item in ParseJsonArray(findingsObj.ToString()))
+                                    {
+                                        var finding = item.TryGetValue("finding", out var f) ? f : "";
+                                        var certainty = item.TryGetValue("certainty", out var c) ? c : "medium";
+                                        var src = item.TryGetValue("source_section", out var s) ? s : null;
+                                        <div class="da-finding">
+                                            <span class="da-certainty da-certainty-@certainty">@certainty</span>
+                                            <div class="da-finding-body">
+                                                <p>@finding</p>
+                                                @if (!string.IsNullOrEmpty(src))
+                                                {
+                                                    <span class="da-source">@src</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (_entry.Output.Data.TryGetValue("risks", out var risksObj) && risksObj is not null)
+                    {
+                        <div>
+                            <button class="section-toggle" @onclick='() => Toggle("risks")'>
+                                <span class="section-chevron">@(IsOpen("risks") ? "▾" : "▶")</span>
+                                <span class="section-toggle-title">Risks</span>
+                            </button>
+                            @if (IsOpen("risks"))
+                            {
+                                <ul class="da-list da-list-risk">
+                                    @foreach (var risk in ParseJsonStringArray(risksObj.ToString()))
+                                    {
+                                        <li>@risk</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    }
+
+                    @if (_entry.Output.Data.TryGetValue("key_facts", out var factsObj) && factsObj is not null)
+                    {
+                        <div>
+                            <button class="section-toggle" @onclick='() => Toggle("keyfacts")'>
+                                <span class="section-chevron">@(IsOpen("keyfacts") ? "▾" : "▶")</span>
+                                <span class="section-toggle-title">Key Facts</span>
+                            </button>
+                            @if (IsOpen("keyfacts"))
+                            {
+                                <ul class="da-list da-list-fact">
+                                    @foreach (var fact in ParseJsonStringArray(factsObj.ToString()))
+                                    {
+                                        <li>@fact</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    }
+
+                    @if (_entry.Output.Data.TryGetValue("flags", out var flagsObj) && flagsObj is not null)
+                    {
+                        var flags = ParseJsonStringArray(flagsObj.ToString());
+                        @if (flags.Any())
+                        {
+                            <div>
+                                <button class="section-toggle" @onclick='() => Toggle("flags")'>
+                                    <span class="section-chevron">@(IsOpen("flags") ? "▾" : "▶")</span>
+                                    <span class="section-toggle-title">Flags</span>
+                                </button>
+                                @if (IsOpen("flags"))
+                                {
+                                    <ul class="da-list da-list-flag">
+                                        @foreach (var flag in flags)
+                                        {
+                                            <li>@flag</li>
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                        }
+                    }
+                }
+                else if (hasNarrative)
+                {
+                    <!-- Narrative layout -->
+                    @if (_entry.Output.Data.TryGetValue("summary", out var narSummaryObj) && narSummaryObj is not null)
+                    {
+                        <div class="narr-summary-panel">
+                            <div class="narr-panel-label">Summary</div>
+                            <p class="narr-summary-text">@narSummaryObj.ToString()</p>
+                        </div>
+                    }
+
+                    @if (_entry.Output.Data.TryGetValue("sections", out var sectionsObj) && sectionsObj is not null)
+                    {
+                        <div>
+                            <button class="section-toggle" @onclick='() => Toggle("sections")'>
+                                <span class="section-chevron">@(IsOpen("sections") ? "▾" : "▶")</span>
+                                <span class="section-toggle-title">Sections</span>
+                            </button>
+                            @if (IsOpen("sections"))
+                            {
+                                <div class="narr-sections">
+                                    @foreach (var sec in ParseJsonArray(sectionsObj.ToString()))
+                                    {
+                                        var heading = sec.TryGetValue("heading", out var h) ? h : "(untitled)";
+                                        var secSummary = sec.TryGetValue("summary", out var ss) ? ss : null;
+                                        var keyPoints = sec.TryGetValue("key_points", out var kp) ? ParseJsonStringArray(kp) : [];
+                                        <div class="narr-section">
+                                            <div class="narr-section-heading">@heading</div>
+                                            @if (!string.IsNullOrEmpty(secSummary))
+                                            {
+                                                <p class="narr-section-summary">@secSummary</p>
+                                            }
+                                            @if (keyPoints.Any())
+                                            {
+                                                <ul class="narr-key-points">
+                                                    @foreach (var pt in keyPoints)
+                                                    {
+                                                        <li>@pt</li>
+                                                    }
+                                                </ul>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (_entry.Output.Data.TryGetValue("conclusions", out var conclusionsObj) && conclusionsObj is not null)
+                    {
+                        <div>
+                            <button class="section-toggle" @onclick='() => Toggle("conclusions")'>
+                                <span class="section-chevron">@(IsOpen("conclusions") ? "▾" : "▶")</span>
+                                <span class="section-toggle-title">Conclusions</span>
+                            </button>
+                            @if (IsOpen("conclusions"))
+                            {
+                                <div class="narr-conclusions">@conclusionsObj.ToString()</div>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                <!-- Extracted fields (standard structured layout) -->
                 @if (_entry.Output.Data.Any())
                 {
                     var fieldsOpen = IsOpen("fields");
@@ -203,6 +375,7 @@ else
                             </div>
                         }
                     </div>
+                }
                 }
 
                 <!-- Tables -->
@@ -264,6 +437,58 @@ else
 
             <!-- Sidebar -->
             <div class="detail-sidebar">
+
+                <!-- Agent Recommendation -->
+                @if (_entry.Output.Data.TryGetValue("agent_recommendation", out var recObj) && recObj is not null)
+                {
+                    var rec = ParseJsonObjectFlat(recObj.ToString());
+                    var agentName = rec.TryGetValue("recommended_agent", out var an) ? an : null;
+                    var recDomain = rec.TryGetValue("domain", out var rd) ? rd : null;
+                    var recConf = rec.TryGetValue("confidence", out var rc) && double.TryParse(rc, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var rcv) ? (double?)rcv : null;
+                    var reasoning = rec.TryGetValue("reasoning", out var rr) ? rr : null;
+                    var signalsRaw = recObj?.ToString() is string recJson ? ParseJsonStringArrayFromJson(recJson, "signals") : new List<string>();
+                    if (agentName is not null)
+                    {
+                        <div class="card recommendation-panel" style="margin-bottom:20px;">
+                            <div class="card-header">
+                                <span class="card-title">Agent Recommendation</span>
+                            </div>
+                            <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+                                <div class="rec-agent-name">@agentName</div>
+                                @if (recDomain is not null)
+                                {
+                                    <div><span class="domain-badge domain-badge-@recDomain.Replace("-", "")">@recDomain</span></div>
+                                }
+                                @if (recConf.HasValue)
+                                {
+                                    <div>
+                                        <div class="field-key">Confidence</div>
+                                        <div class="field-val" style="font-size:13px;">@((recConf.Value * 100).ToString("F0"))%</div>
+                                    </div>
+                                }
+                                @if (!string.IsNullOrEmpty(reasoning))
+                                {
+                                    <div>
+                                        <div class="field-key">Reasoning</div>
+                                        <p class="rec-reasoning">@reasoning</p>
+                                    </div>
+                                }
+                                @if (signalsRaw.Any())
+                                {
+                                    <div>
+                                        <div class="field-key" style="margin-bottom:6px;">Signals</div>
+                                        <div class="signal-chips">
+                                            @foreach (var sig in signalsRaw)
+                                            {
+                                                <span class="signal-chip">@sig</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
 
                 <!-- Tags -->
                 @if (_entry.Output.Tags.Any())
@@ -385,6 +610,53 @@ else
     static string Sanitize(string name) =>
         string.IsNullOrWhiteSpace(name) ? "result"
             : new string(name.Select(c => char.IsLetterOrDigit(c) ? char.ToLower(c) : '-').ToArray()).Trim('-');
+
+    static Dictionary<string, string> ParseJsonObjectFlat(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var obj = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json);
+            if (obj is null) return [];
+            return obj.ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
+        }
+        catch { return []; }
+    }
+
+    static List<string> ParseJsonStringArrayFromJson(string json, string key)
+    {
+        try
+        {
+            var obj = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+            if (obj.TryGetProperty(key, out var arr))
+                return System.Text.Json.JsonSerializer.Deserialize<List<string>>(arr.GetRawText()) ?? [];
+        }
+        catch { }
+        return [];
+    }
+
+    static List<Dictionary<string, string>> ParseJsonArray(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var arr = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, System.Text.Json.JsonElement>>>(json);
+            if (arr is null) return [];
+            return arr.Select(d => d.ToDictionary(kv => kv.Key, kv => kv.Value.ToString())).ToList();
+        }
+        catch { return []; }
+    }
+
+    static List<string> ParseJsonStringArray(object? obj)
+    {
+        var json = obj?.ToString();
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch { return []; }
+    }
 
     static string DomainIconLarge(string domain) => domain switch
     {
