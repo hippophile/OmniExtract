@@ -1,6 +1,7 @@
 @page "/lab"
 @using OmniExtract.App.Services
 @using OmniExtract.Core.Models
+@using System.Text.Json
 @inject DocumentProcessor DocumentProcessor
 @inject ExtractionService ExtractionService
 
@@ -96,6 +97,13 @@
                                     <th>Classification</th>
                                     <td><span class="lab-classification">@r.Classification</span></td>
                                 </tr>
+                                @if (r.Output?.Meta.Strategy is not null)
+                                {
+                                    <tr>
+                                        <th>Strategy</th>
+                                        <td><span class="lab-strategy">@r.Output.Meta.Strategy</span></td>
+                                    </tr>
+                                }
                                 <tr>
                                     <th>Confidence</th>
                                     <td>@(r.Confidence < 0 ? "n/a" : r.Confidence.ToString("P0"))</td>
@@ -106,12 +114,19 @@
                                 </tr>
                                 <tr>
                                     <th>Fields</th>
-                                    <td>@(r.Output?.Data.Count ?? 0)</td>
+                                    <td>@((r.Output?.Data.Count ?? 0) + (r.Output?.Tables?.Sum(t => t.Count - 1) ?? 0))</td>
                                 </tr>
                                 <tr>
                                     <th>Warnings</th>
                                     <td>@(r.Output?.Meta.Warnings.Count ?? 0)</td>
                                 </tr>
+                                @if (r.DetectionReason is not null)
+                                {
+                                    <tr>
+                                        <th>Detection</th>
+                                        <td class="lab-detection-reason">@r.DetectionReason</td>
+                                    </tr>
+                                }
                             </tbody>
                         </table>
 
@@ -119,19 +134,51 @@
                             @(_expanded.Contains(r.ApproachName) ? "Hide details" : "Show details")
                         </button>
 
-                        @if (_expanded.Contains(r.ApproachName) && r.Output?.Data is not null)
+                        @if (_expanded.Contains(r.ApproachName) && r.Output is not null)
                         {
                             <div class="lab-details">
                                 @foreach (var kv in r.Output.Data)
                                 {
                                     <div class="lab-detail-row">
                                         <span class="lab-detail-key">@kv.Key</span>
-                                        <span class="lab-detail-val">@(kv.Value?.ToString() ?? "—")</span>
+                                        <span class="lab-detail-val">@(FormatValue(kv.Value))</span>
                                     </div>
                                 }
-                                @if (!r.Output.Data.Any())
+                                @if (!r.Output.Data.Any() && (r.Output.Tables is null || !r.Output.Tables.Any()))
                                 {
                                     <p class="lab-empty">No data fields extracted.</p>
+                                }
+                                @if (r.Output.Tables is not null)
+                                {
+                                    @foreach (var table in r.Output.Tables)
+                                    {
+                                        <div class="lab-table-wrap">
+                                            <table class="lab-table">
+                                                @if (table.Count > 0)
+                                                {
+                                                    <thead>
+                                                        <tr>
+                                                            @foreach (var cell in table[0])
+                                                            {
+                                                                <th>@cell</th>
+                                                            }
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var row in table.Skip(1))
+                                                        {
+                                                            <tr>
+                                                                @foreach (var cell in row)
+                                                                {
+                                                                    <td>@cell</td>
+                                                                }
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                }
+                                            </table>
+                                        </div>
+                                    }
                                 }
                             </div>
                         }
@@ -189,12 +236,13 @@
         {
             var extracted = await DocumentProcessor.ExtractAsync(_tempFilePath);
             var text = extracted.Text ?? string.Empty;
+            var images = extracted.Images.Count > 0 ? extracted.Images : null;
             var ext = Path.GetExtension(_tempFilePath);
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 
-            var taskA = ExtractionService.RunApproachAAsync(text, ext, cts.Token);
-            var taskB = ExtractionService.RunApproachBAsync(text, ext, cts.Token);
-            var taskC = ExtractionService.RunApproachCAsync(text, ext, cts.Token);
+            var taskA = ExtractionService.RunApproachAAsync(text, ext, images, cts.Token);
+            var taskB = ExtractionService.RunApproachBAsync(text, ext, images, cts.Token);
+            var taskC = ExtractionService.RunApproachCAsync(text, ext, images, cts.Token);
 
             var all = await Task.WhenAll(taskA, taskB, taskC);
             _results = [.. all];
@@ -217,6 +265,25 @@
         _uploadError = null;
         _expanded.Clear();
     }
+
+    static string FormatValue(object? value)
+    {
+        if (value is null) return "—";
+        if (value is JsonElement el) return FormatElement(el);
+        return value.ToString() ?? "—";
+    }
+
+    static string FormatElement(JsonElement el) => el.ValueKind switch
+    {
+        JsonValueKind.String => el.GetString() ?? "—",
+        JsonValueKind.Number => el.GetRawText(),
+        JsonValueKind.True   => "true",
+        JsonValueKind.False  => "false",
+        JsonValueKind.Null   => "—",
+        JsonValueKind.Array  => string.Join("\n", el.EnumerateArray().Select(FormatElement)),
+        JsonValueKind.Object => string.Join("\n", el.EnumerateObject().Select(p => $"{p.Name}: {FormatElement(p.Value)}")),
+        _                    => "—"
+    };
 
     private void ToggleDetails(string name)
     {

@@ -21,4 +21,7 @@ public class OutputMeta
 
     [JsonPropertyName("warnings")]
     public List<string> Warnings { get; set; } = new();
+
+    [JsonPropertyName("strategy")]
+    public string? Strategy { get; set; }
 }

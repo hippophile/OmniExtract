@@ -17,7 +17,8 @@ public record LabApproachResult(
     float Confidence,
     UniversalOutput? Output,
     TimeSpan Elapsed,
-    string? Error
+    string? Error,
+    string? DetectionReason = null
 );
 
 public class ExtractionService
@@ -66,6 +67,7 @@ public class ExtractionService
         - Never add comments (no // or /* */ inside JSON)
         - Never invent fields that are not present in the document
         - Respond with raw, valid JSON only
+        - Extract values exactly as they appear — do not interpret, convert, or reformat them
         """;
 
     private const string NarrativePrompt = """
@@ -194,22 +196,62 @@ public class ExtractionService
         """;
 
     private const string AdaptivePrompt = """
-        You are a universal document extraction engine. Perform two tasks in one response:
-        1. Classify the document as 'structured' (data/form) or 'narrative' (prose/report)
-        2. Extract all content according to that classification
+        You are a universal document intelligence engine.
 
-        Respond ONLY with valid JSON matching this schema (no markdown fences):
+        Step 1 — Identify:
+        - What kind of document is this? (invoice, contract, medical report, academic paper, financial statement, email, court filing, research abstract, earnings call, etc.)
+        - What domain? (finance, legal, medical, academic, technical, HR, logistics, general)
+        - Is it data-driven (tables, numbers, forms) or narrative (prose, arguments, findings)?
+
+        Step 2 — Decide what matters:
+        Based on the document type, decide which fields are actually meaningful to extract.
+        Do NOT use a generic schema. Ask: "what would an expert in this domain want to know?"
+
+        Examples of domain-specific fields:
+        - Medical report → diagnosis, medications, dosages, doctor, patient, dates, recommendations, risk_factors
+        - Legal contract → parties, effective_date, obligations, penalties, governing_law, key_clauses, termination_conditions
+        - Financial statement → revenue, ebitda, net_income, period, currency, key_ratios, auditor
+        - Academic paper → title, authors, abstract, methodology, findings, conclusions, keywords, citations_count
+        - Invoice → vendor, buyer, invoice_number, date, line_items, total, currency, payment_terms
+        - Earnings call → company, quarter, speakers, key_metrics, guidance, risks_mentioned, sentiment
+        - For ANY document: extract what an expert reader would underline or highlight
+
+        Step 3 — Extract everything meaningful:
+        - For data-driven documents: extract all tables with full rows and columns, plus key metrics in data{}
+        - For narrative documents: extract the domain-specific fields you identified, plus a concise summary
+        - Always include: language, document type, confidence in your extraction quality
+
+        Respond ONLY with valid JSON, no markdown fences:
         {
           "classification": "structured|narrative",
           "classification_confidence": 0.0,
+          "classification_reasoning": "one sentence: what signals in the document led to this classification",
           "extraction": {
-            "meta": {"document_type":"string","language":["ISO-code"],"confidence":0.0,"extraction_method":"text","warnings":[]},
-            "tags": [],
-            "categories": {"domain":"string","subdomain":"string","sensitivity":"public|internal|confidential|restricted"},
-            "data": {"field_name":"value"},
+            "meta": {
+              "document_type": "specific type (e.g. 'medical discharge summary', not just 'document')",
+              "language": ["ISO-code"],
+              "confidence": 0.0,
+              "extraction_method": "text",
+              "warnings": []
+            },
+            "tags": ["domain-specific tags"],
+            "categories": {
+              "domain": "string",
+              "subdomain": "string",
+              "sensitivity": "public|internal|confidential|restricted"
+            },
+            "data": {
+              "comment": "use field names that make sense for THIS document type — do not use generic names"
+            },
             "tables": []
           }
         }
+
+        RULES:
+        - Never truncate tables or arrays
+        - Never invent data not present in the document
+        - Never use generic field names like 'field_1' or 'content' when a specific name applies
+        - Raw JSON only — no prose, no markdown
         """;
 
     private readonly GptClient _gpt;
@@ -242,16 +284,38 @@ public class ExtractionService
 
         try
         {
+            var strategy = RouteDocument(extracted, ext);
             UniversalOutput result;
-            if (extracted.Images.Count > 0)
+
+            switch (strategy)
             {
-                meta.ExtractionMethod = "vision";
-                result = await ExtractVisionAsync(extracted.Images, ct);
-            }
-            else
-            {
-                meta.ExtractionMethod = "text";
-                result = await ExtractTextAsync(extracted.Text, ext, mode, ct);
+                case ExtractionStrategy.Vision:
+                    meta.ExtractionMethod = "vision";
+                    result = await ExtractVisionAsync(extracted.Images, ct);
+                    result.Meta.Strategy = "vision";
+                    break;
+
+                case ExtractionStrategy.Heuristic:
+                    meta.ExtractionMethod = "text";
+                    result = await ExtractTextAsync(extracted.Text, ext, mode, ct);
+                    var meaningfulCount = CountMeaningfulFields(result.Data);
+                    if (meaningfulCount < _settings.HeuristicFallbackThreshold)
+                    {
+                        _logger.LogInformation("Heuristic yielded {Count} meaningful fields — escalating to TextRich", meaningfulCount);
+                        result = await ExtractTextAdaptiveAsync(extracted.Text, mode, ct);
+                        result.Meta.Strategy = "heuristic→text-rich";
+                    }
+                    else
+                    {
+                        result.Meta.Strategy = "heuristic";
+                    }
+                    break;
+
+                default: // TextRich
+                    meta.ExtractionMethod = "text";
+                    result = await ExtractTextAdaptiveAsync(extracted.Text, mode, ct);
+                    result.Meta.Strategy = "text-rich";
+                    break;
             }
 
             // Merge provenance from our meta
@@ -273,6 +337,39 @@ public class ExtractionService
                 Data = new Dictionary<string, object?> { ["raw_error"] = ex.Message }
             };
         }
+    }
+
+    public ExtractionStrategy RouteDocument(ExtractionResult extracted, string ext)
+    {
+        if (extracted.Images.Count > 0) return ExtractionStrategy.Vision;
+        if (ForceStructuredExts.Contains(ext)) return ExtractionStrategy.Heuristic;
+        return ExtractionStrategy.TextRich;
+    }
+
+    private static readonly HashSet<string> InjectedMetaKeys = new(StringComparer.OrdinalIgnoreCase)
+        { "current_datetime", "raw_response", "raw_error" };
+
+    private static int CountMeaningfulFields(Dictionary<string, object?> data) =>
+        data.Keys.Count(k => !InjectedMetaKeys.Contains(k));
+
+    private async Task<UniversalOutput> ExtractTextAdaptiveAsync(string text, AnalysisMode mode, CancellationToken ct)
+    {
+        var messages = new List<GptMessage>
+        {
+            new SystemGptMessage(AdaptivePrompt),
+            new UserGptMessage(text)
+        };
+        var raw = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+        var cleaned = LineCommentRegex.Replace(raw, string.Empty);
+        try
+        {
+            var wrapper = JsonSerializer.Deserialize<JsonNode>(cleaned, JsonOpts);
+            var extractionNode = wrapper?["extraction"];
+            if (extractionNode is not null)
+                return ParseResponse(extractionNode.ToJsonString(), "text/adaptive");
+        }
+        catch { }
+        return ParseResponse(raw, "text/adaptive");
     }
 
     private async Task<UniversalOutput> ExtractTextAsync(string text, string ext, AnalysisMode mode, CancellationToken ct)
@@ -397,17 +494,37 @@ public class ExtractionService
     private static readonly Regex LineCommentRegex =
         new(@"^\s*//[^\n]*\n?", RegexOptions.Multiline | RegexOptions.Compiled);
 
+    // Strip ```json ... ``` or ``` ... ``` fences the model sometimes emits despite instructions
+    private static readonly Regex MarkdownFenceRegex =
+        new(@"^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
+
     private static UniversalOutput ParseResponse(string json, string method)
     {
         try
         {
-            var cleaned = LineCommentRegex.Replace(json, string.Empty);
-            var output = JsonSerializer.Deserialize<UniversalOutput>(cleaned, JsonOpts);
-            if (output is not null)
+            var fenceMatch = MarkdownFenceRegex.Match(json.Trim());
+            var stripped = fenceMatch.Success ? fenceMatch.Groups[1].Value : json;
+            var first = stripped.IndexOf('{');
+            var last = stripped.LastIndexOf('}');
+            if (first >= 0 && last > first) stripped = stripped[first..(last + 1)];
+            var cleaned = LineCommentRegex.Replace(stripped, string.Empty);
+
+            // Parse as raw document first so we can normalize tables before binding
+            var doc = JsonSerializer.Deserialize<JsonNode>(cleaned, JsonOpts);
+            if (doc is not null)
             {
-                if (string.IsNullOrWhiteSpace(output.Meta.ExtractionMethod))
-                    output.Meta.ExtractionMethod = method;
-                return output;
+                // Normalize tables in-place before full deserialization
+                var tablesNode = doc["tables"];
+                if (tablesNode is JsonArray)
+                    doc["tables"] = NormalizeTables(tablesNode.AsArray());
+
+                var output = JsonSerializer.Deserialize<UniversalOutput>(doc.ToJsonString(), JsonOpts);
+                if (output is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(output.Meta.ExtractionMethod))
+                        output.Meta.ExtractionMethod = method;
+                    return output;
+                }
             }
         }
         catch { }
@@ -422,6 +539,95 @@ public class ExtractionService
             },
             Data = new Dictionary<string, object?> { ["raw_response"] = json }
         };
+    }
+
+    private static JsonArray NormalizeTables(JsonArray raw)
+    {
+        var result = new JsonArray();
+        if (raw.Count == 0) return result;
+
+        foreach (var item in raw)
+        {
+            if (item is null) continue;
+            var table = NormalizeTable(item);
+            if (table.Count > 0) result.Add(table);
+        }
+
+        // Handle: model returned a single unwrapped table [[row],[row]] instead of [[[row],[row]]]
+        if (result.Count == 0 && raw.Count > 0 && raw[0] is JsonArray firstRow && firstRow.Count > 0)
+        {
+            var single = new JsonArray();
+            foreach (var row in raw)
+                single.Add(row?.DeepClone());
+            result.Add(single);
+        }
+
+        return result;
+    }
+
+    private static JsonArray NormalizeTable(JsonNode item)
+    {
+        var table = new JsonArray();
+
+        // Already array-of-arrays: [["h1","h2"],["v1","v2"]]
+        if (item is JsonArray rows)
+        {
+            foreach (var row in rows)
+            {
+                if (row is JsonArray cells)
+                {
+                    var r = new JsonArray();
+                    foreach (var c in cells) r.Add(c?.GetValue<string>() ?? c?.ToString() ?? "");
+                    table.Add(r);
+                }
+                else if (row is JsonObject obj)
+                {
+                    // Row is an object — flatten values
+                    var r = new JsonArray();
+                    foreach (var p in obj) r.Add(p.Value?.ToString() ?? "");
+                    table.Add(r);
+                }
+            }
+            return table;
+        }
+
+        // Object with headers/rows keys: {"headers":[...],"rows":[[...]]}
+        if (item is JsonObject tableObj)
+        {
+            var headers = tableObj["headers"] as JsonArray ?? tableObj["columns"] as JsonArray;
+            var dataRows = tableObj["rows"] as JsonArray ?? tableObj["data"] as JsonArray;
+
+            if (headers is not null)
+            {
+                var h = new JsonArray();
+                foreach (var c in headers) h.Add(c?.GetValue<string>() ?? c?.ToString() ?? "");
+                table.Add(h);
+            }
+
+            if (dataRows is not null)
+            {
+                foreach (var row in dataRows)
+                {
+                    var r = new JsonArray();
+                    if (row is JsonArray cells)
+                        foreach (var c in cells) r.Add(c?.GetValue<string>() ?? c?.ToString() ?? "");
+                    else if (row is JsonObject rowObj)
+                        foreach (var p in rowObj) r.Add(p.Value?.ToString() ?? "");
+                    table.Add(r);
+                }
+            }
+            else if (headers is null)
+            {
+                // Object where each key is a column: {"Product":"A","Units":"150"}
+                var h = new JsonArray();
+                var vals = new JsonArray();
+                foreach (var p in tableObj) { h.Add(p.Key); vals.Add(p.Value?.ToString() ?? ""); }
+                table.Add(h);
+                table.Add(vals);
+            }
+        }
+
+        return table;
     }
 
     public static UniversalOutput MergeResults(List<UniversalOutput> results)
@@ -605,6 +811,37 @@ public class ExtractionService
         return structuredScore > narrativeScore ? "structured" : "narrative";
     }
 
+    public static (string Classification, string Reason) ClassifyDocumentWithReason(string text, string ext)
+    {
+        if (ForceStructuredExts.Contains(ext))
+            return ("structured", $"Extension '{ext}' is a known tabular/data format.");
+
+        var sample = text.Length > 500 ? text[..500] : text;
+        var signals = new List<string>();
+        int structuredScore = 0, narrativeScore = 0;
+
+        if (NarrativeExts.Contains(ext)) { narrativeScore++; signals.Add($"narrative extension '{ext}'"); }
+
+        var numericMatches = NumericPattern.Matches(sample).Count;
+        if (numericMatches >= 3) { structuredScore++; signals.Add($"{numericMatches} numeric patterns in opening text"); }
+
+        if (DelimiterPattern.IsMatch(sample)) { structuredScore++; signals.Add("delimiter/table characters detected"); }
+
+        if (text.Length < 5_000) { structuredScore++; signals.Add($"short document ({text.Length} chars)"); }
+        else if (text.Length > 20_000) { narrativeScore++; signals.Add($"long document ({text.Length} chars)"); }
+
+        var words = sample.Split(new char[] { ' ', '\n', '\t', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length > 0 && words.Average(w => (double)w.Length) > 4)
+        { narrativeScore++; signals.Add("high average word length (prose indicator)"); }
+
+        var sentenceCount = SentenceEnd.Matches(sample).Count;
+        if (sentenceCount > 3) { narrativeScore++; signals.Add($"{sentenceCount} sentences detected"); }
+
+        var result = structuredScore > narrativeScore ? "structured" : "narrative";
+        var reason = $"Scores: structured={structuredScore}, narrative={narrativeScore}. Signals: {string.Join("; ", signals)}.";
+        return (result, reason);
+    }
+
     // ── Recommendation pass ───────────────────────────────────────
 
     public async Task<Dictionary<string, object?>?> RecommendationPassAsync(UniversalOutput result, CancellationToken ct)
@@ -658,11 +895,18 @@ public class ExtractionService
 
     // ── Lab approach runners ──────────────────────────────────────
 
-    public async Task<LabApproachResult> RunApproachAAsync(string text, string ext, CancellationToken ct)
+    public async Task<LabApproachResult> RunApproachAAsync(string text, string ext, List<string>? images, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
+            if (images is { Count: > 0 })
+            {
+                var output = await ExtractVisionAsync(images, ct);
+                sw.Stop();
+                return new LabApproachResult("A — Classify-first", output.Meta.DocumentType ?? "structured", (float)output.Meta.Confidence, output, sw.Elapsed, null);
+            }
+
             // Call 1: classify via API
             var classifyMessages = new List<GptMessage>
             {
@@ -673,6 +917,7 @@ public class ExtractionService
             var classifyJson = JsonSerializer.Deserialize<JsonNode>(classifyRaw, JsonOpts);
             var classification = classifyJson?["classification"]?.GetValue<string>() ?? "narrative";
             var confidence = classifyJson?["confidence"]?.GetValue<float>() ?? 0f;
+            var reason = classifyJson?["reason"]?.GetValue<string>();
 
             // Call 2: extract with appropriate prompt
             var extractPrompt = classification == "structured" ? StructuredPrompt : NarrativePrompt;
@@ -682,10 +927,10 @@ public class ExtractionService
                 new UserGptMessage(text)
             };
             var extractRaw = await _gpt.CallAsync(extractMessages, ct: ct);
-            var output = ParseResponse(extractRaw, $"text/{classification}");
+            var textOutput = ParseResponse(extractRaw, $"text/{classification}");
 
             sw.Stop();
-            return new LabApproachResult("A — Classify-first", classification, confidence, output, sw.Elapsed, null);
+            return new LabApproachResult("A — Classify-first", classification, confidence, textOutput, sw.Elapsed, null, reason);
         }
         catch (Exception ex)
         {
@@ -694,11 +939,18 @@ public class ExtractionService
         }
     }
 
-    public async Task<LabApproachResult> RunApproachBAsync(string text, string ext, CancellationToken ct)
+    public async Task<LabApproachResult> RunApproachBAsync(string text, string ext, List<string>? images, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
+            if (images is { Count: > 0 })
+            {
+                var output = await ExtractVisionAsync(images, ct);
+                sw.Stop();
+                return new LabApproachResult("B — Adaptive prompt", output.Meta.DocumentType ?? "structured", (float)output.Meta.Confidence, output, sw.Elapsed, null);
+            }
+
             var messages = new List<GptMessage>
             {
                 new SystemGptMessage(AdaptivePrompt),
@@ -712,13 +964,14 @@ public class ExtractionService
 
             var classification = wrapper["classification"]?.GetValue<string>() ?? "unknown";
             var confidence = wrapper["classification_confidence"]?.GetValue<float>() ?? 0f;
+            var reason = wrapper["classification_reasoning"]?.GetValue<string>();
             var extractionNode = wrapper["extraction"];
-            UniversalOutput? output = null;
+            UniversalOutput? output2 = null;
             if (extractionNode is not null)
-                output = JsonSerializer.Deserialize<UniversalOutput>(extractionNode.ToJsonString(), JsonOpts);
+                output2 = ParseResponse(extractionNode.ToJsonString(), $"text/{classification}");
 
             sw.Stop();
-            return new LabApproachResult("B — Adaptive prompt", classification, confidence, output, sw.Elapsed, null);
+            return new LabApproachResult("B — Adaptive prompt", classification, confidence, output2, sw.Elapsed, null, reason);
         }
         catch (Exception ex)
         {
@@ -727,12 +980,19 @@ public class ExtractionService
         }
     }
 
-    public async Task<LabApproachResult> RunApproachCAsync(string text, string ext, CancellationToken ct)
+    public async Task<LabApproachResult> RunApproachCAsync(string text, string ext, List<string>? images, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            var classification = ClassifyDocument(text, ext);
+            if (images is { Count: > 0 })
+            {
+                var output = await ExtractVisionAsync(images, ct);
+                sw.Stop();
+                return new LabApproachResult("C — Heuristic", output.Meta.DocumentType ?? "structured", -1f, output, sw.Elapsed, null);
+            }
+
+            var (classification, cReason) = ClassifyDocumentWithReason(text, ext);
 
             var extractPrompt = classification == "structured" ? StructuredPrompt : NarrativePrompt;
             var extractMessages = new List<GptMessage>
@@ -741,10 +1001,10 @@ public class ExtractionService
                 new UserGptMessage(text)
             };
             var raw = await _gpt.CallAsync(extractMessages, ct: ct);
-            var output = ParseResponse(raw, $"text/{classification}");
+            var textOutput = ParseResponse(raw, $"text/{classification}");
 
             sw.Stop();
-            return new LabApproachResult("C — Heuristic", classification, -1f, output, sw.Elapsed, null);
+            return new LabApproachResult("C — Heuristic", classification, -1f, textOutput, sw.Elapsed, null, cReason);
         }
         catch (Exception ex)
         {

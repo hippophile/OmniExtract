@@ -17,6 +17,7 @@ public class ProcessingSettings
     public int MaxOutputTokens { get; set; } = 4096;
     public int ModelContextLimit { get; set; } = 128000;
     public int TokenBuffer { get; set; } = 8000;
+    public int HeuristicFallbackThreshold { get; set; } = 3;
 }
 
 public class PathSettings

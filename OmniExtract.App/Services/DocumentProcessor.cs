@@ -15,6 +15,7 @@ using OmniExtract.Core.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Processing.Processors.Transforms;
 using UglyToad.PdfPig;
 using A = DocumentFormat.OpenXml.Drawing;
 using PptShape = DocumentFormat.OpenXml.Presentation.Shape;
@@ -346,34 +347,46 @@ public class DocumentProcessor
 
     private string ResizeForVision(byte[] imageBytes)
     {
-        const int MaxBytes = 1_500_000;
+        const int MaxBytes = 4_000_000;
+        const int TargetMinDim = 2048; // upscale small images so fine text is readable
+
         using var image = Image.Load(imageBytes);
 
-        void ScaleDown(int maxDim)
+        // Upscale if the image is smaller than TargetMinDim on its longest edge
+        var longest = Math.Max(image.Width, image.Height);
+        if (longest < TargetMinDim)
         {
-            if (Math.Max(image.Width, image.Height) > maxDim)
-            {
-                var scale = maxDim / (double)Math.Max(image.Width, image.Height);
-                image.Mutate(ctx => ctx.Resize(
-                    Math.Max(1, (int)(image.Width * scale)),
-                    Math.Max(1, (int)(image.Height * scale))));
-            }
+            var scale = TargetMinDim / (double)longest;
+            image.Mutate(ctx => ctx.Resize(
+                new ResizeOptions
+                {
+                    Size = new Size(
+                        Math.Max(1, (int)(image.Width * scale)),
+                        Math.Max(1, (int)(image.Height * scale))),
+                    Sampler = KnownResamplers.Lanczos3,
+                    Mode = ResizeMode.Stretch
+                }));
         }
 
-        ScaleDown(_settings.VisionMaxDimension);
+        // Sharpen + contrast boost — makes small numbers crisper for vision model
+        image.Mutate(ctx => ctx
+            .GaussianSharpen(0.8f)
+            .Contrast(0.15f));
+
         using var stream = new MemoryStream();
         image.SaveAsPng(stream);
         if (stream.Length <= MaxBytes)
             return Convert.ToBase64String(stream.ToArray());
 
+        // Fallback: cap at 4096px and use JPEG if still too large
         stream.SetLength(0);
-        ScaleDown(1024);
-        image.SaveAsPng(stream);
-        if (stream.Length <= MaxBytes)
-            return Convert.ToBase64String(stream.ToArray());
+        var scale2 = 4096.0 / Math.Max(image.Width, image.Height);
+        if (scale2 < 1.0)
+            image.Mutate(ctx => ctx.Resize(
+                Math.Max(1, (int)(image.Width * scale2)),
+                Math.Max(1, (int)(image.Height * scale2))));
 
-        stream.SetLength(0);
-        image.SaveAsJpeg(stream, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = 75 });
+        image.SaveAsJpeg(stream, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = 90 });
         return Convert.ToBase64String(stream.ToArray());
     }
 

@@ -219,7 +219,7 @@
 </div>
 
 @code {
-    static readonly string[] _stepLabels = ["Parse", "Extract Text", "Chunk", "AI Analysis", "Done"];
+    static readonly string[] _stepLabels = ["Parse", "Extract Text", "Chunk", "AI Analysis", "Recommend", "Done"];
 
     System.Timers.Timer? _ticker;
     bool _dragOver;
@@ -256,13 +256,14 @@
 
     static int GetActiveStep(string stage, JobStatus status) => stage switch
     {
-        "Parsing file..."        => 0,
-        "Extracting content..."  => 1,
-        "Chunking document..."   => 2,
-        "Running AI analysis..." => 3,
-        "Complete"               => 4,
-        "Cancelled"              => 0,
-        _                        => 0
+        "Parsing file..."         => 0,
+        "Extracting content..."   => 1,
+        "Chunking document..."    => 2,
+        "Running AI analysis..."  => 3,
+        "Agent recommendation..." => 4,
+        "Complete"                => 5,
+        "Cancelled"               => 0,
+        _                         => 0
     };
 
     static bool ShouldShowStats(ProcessingJob job)
