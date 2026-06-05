@@ -147,6 +147,11 @@
                             <div>
                                 <div class="rc-name">@entry.Output.Meta.DocumentType</div>
                                 <div class="rc-type">@TruncateName(entry.FileName)</div>
+                                @{ var verdictPreview = GetVerdictSummary(entry); }
+                                @if (verdictPreview is not null)
+                                {
+                                    <div class="result-verdict-preview">@verdictPreview</div>
+                                }
                             </div>
                         </div>
                         <div class="tag-list">
@@ -295,6 +300,35 @@
     }
 
     static string ConfColor(double pct) => pct >= 90 ? "var(--success)" : pct >= 75 ? "var(--warning)" : "var(--error)";
+
+    static string? GetVerdictSummary(ResultsEntry entry)
+    {
+        if (entry.IsFailed) return null;
+        if (!entry.Output.Data.TryGetValue("verdict", out var verdictObj) || verdictObj is null) return null;
+        var flat = ParseJsonObjectFlat(ToJsonString(verdictObj));
+        if (!flat.TryGetValue("summary", out var summary) || string.IsNullOrWhiteSpace(summary)) return null;
+        return summary.Length > 120 ? summary[..120] + "…" : summary;
+    }
+
+    static string ToJsonString(object? obj) => obj switch
+    {
+        null => "null",
+        string s => s,
+        System.Text.Json.JsonElement je => je.ToString(),
+        _ => System.Text.Json.JsonSerializer.Serialize(obj)
+    };
+
+    static Dictionary<string, string> ParseJsonObjectFlat(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var obj = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json);
+            if (obj is null) return [];
+            return obj.ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
+        }
+        catch { return []; }
+    }
 
     static string DocIcon(string domain) => domain switch
     {

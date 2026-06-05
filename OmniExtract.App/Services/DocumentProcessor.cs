@@ -149,7 +149,7 @@ public class DocumentProcessor
         return new ExtractionResult { Text = string.Join("\n", rows) };
     }
 
-    private static ExtractionResult ExtractEml(string filePath)
+    private ExtractionResult ExtractEml(string filePath)
     {
         var opts = new MimeKit.ParserOptions { RespectContentLength = false };
         MimeMessage msg;
@@ -159,9 +159,9 @@ public class DocumentProcessor
         }
         catch (FormatException)
         {
-            // Truly malformed — read raw text and let AI handle it
             return new ExtractionResult { Text = File.ReadAllText(filePath) };
         }
+
         var parts = new List<string>
         {
             $"From: {msg.From}",
@@ -174,10 +174,44 @@ public class DocumentProcessor
         if (!string.IsNullOrWhiteSpace(body))
             parts.Add(NormalizeText(body));
 
-        if (msg.Attachments.Any())
-            parts.Add($"Attachments: {string.Join(", ", msg.Attachments.Select(a => ((MimePart)a).FileName))}");
+        var images = new List<string>();
 
-        return new ExtractionResult { Text = string.Join("\n", parts) };
+        foreach (var attachment in msg.Attachments.OfType<MimePart>())
+        {
+            var fileName = attachment.FileName ?? "attachment";
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            var tmp = Path.Combine(Path.GetTempPath(), $"omni_{Guid.NewGuid():N}{ext}");
+            try
+            {
+                using (var fs = File.Create(tmp))
+                    attachment.Content.DecodeTo(fs);
+
+                var extracted = NativeExtensions.Contains(ext)
+                    ? ExtractNative(tmp, ext)
+                    : new ExtractionResult { Text = TryReadText(tmp) };
+
+                if (!string.IsNullOrWhiteSpace(extracted.Text))
+                    parts.Add($"[Attachment: {fileName}]\n{extracted.Text}");
+                if (extracted.Images.Count > 0)
+                    images.AddRange(extracted.Images);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to extract EML attachment {Name}", fileName);
+                parts.Add($"[Attachment: {fileName} — extraction failed]");
+            }
+            finally
+            {
+                TryDelete(tmp);
+            }
+        }
+
+        return new ExtractionResult { Text = string.Join("\n\n", parts), Images = images };
+    }
+
+    private static string TryReadText(string path)
+    {
+        try { return ReadTextFile(path); } catch { return string.Empty; }
     }
 
     private static ExtractionResult ExtractDocx(string filePath)

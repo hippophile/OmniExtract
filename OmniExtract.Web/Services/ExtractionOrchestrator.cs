@@ -102,25 +102,45 @@ public class ExtractionOrchestrator
             }
             NotifyState();
 
-            job.Stage = "Running AI analysis...";
+            job.Stage = "Building field spec...";
             job.StageStartedAt = DateTime.UtcNow;
             NotifyState();
 
-            var result = await _extractionService.ExtractAsync(job.TempPath, extracted, job.AnalysisMode, ct);
+            void OnStage(string stage)
+            {
+                job.Stage = stage;
+                job.StageStartedAt = DateTime.UtcNow;
+                NotifyState();
+            }
+
+            var result = await _extractionService.ExtractAsync(job.TempPath, extracted, job.AnalysisMode, OnStage, ct);
 
             job.Stage = "Agent recommendation...";
             job.StageStartedAt = DateTime.UtcNow;
             NotifyState();
 
-            // Recommendation is best-effort: short timeout, no long retries
+            // Recommendation + verdict run concurrently — both best-effort with 45s timeout
             await Task.Delay(TimeSpan.FromSeconds(3), ct);
-            using var recCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            recCts.CancelAfter(TimeSpan.FromSeconds(45));
-            var recommendation = await _extractionService.RecommendationPassAsync(result, recCts.Token);
+            using var postCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            postCts.CancelAfter(TimeSpan.FromSeconds(45));
+
+            var recTask = _extractionService.RecommendationPassAsync(result, postCts.Token);
+            var verdictTask = _extractionService.VerdictPassAsync(result, postCts.Token);
+            await Task.WhenAll(recTask, verdictTask);
+
+            var recommendation = recTask.Result;
             if (recommendation is not null)
                 result.Data["agent_recommendation"] = recommendation;
             else
                 result.Meta.Warnings.Add("Agent recommendation pass skipped.");
+
+            job.Stage = "Generating verdict...";
+            job.StageStartedAt = DateTime.UtcNow;
+            NotifyState();
+
+            var verdict = verdictTask.Result;
+            if (verdict is not null)
+                result.Data["verdict"] = verdict;
 
             job.Result = result;
             job.Status = JobStatus.Done;
@@ -179,7 +199,7 @@ public class ExtractionOrchestrator
             try
             {
                 var extracted = await _documentProcessor.ExtractAsync(memberPath, innerCt);
-                var result = await _extractionService.ExtractAsync(memberPath, extracted, job.AnalysisMode, innerCt);
+                var result = await _extractionService.ExtractAsync(memberPath, extracted, job.AnalysisMode, null, innerCt);
                 memberResults.Add(result);
             }
             catch (Exception ex)

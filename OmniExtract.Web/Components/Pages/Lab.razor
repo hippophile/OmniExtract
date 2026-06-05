@@ -25,8 +25,8 @@
                     <path d="M18 14v6M15 17l3-3 3 3"/>
                 </svg>
             </div>
-            <p class="lab-upload-title">Upload a document to run all three approaches</p>
-            <p class="lab-upload-sub">Approaches A (classify-first), B (adaptive prompt), and C (heuristic) run in parallel</p>
+            <p class="lab-upload-title">Upload a document to compare extraction approaches</p>
+            <p class="lab-upload-sub">A (single call) vs B (spec-first, 2 calls) — run in parallel</p>
             <label class="btn btn-primary lab-upload-btn">
                 Choose File
                 <InputFile OnChange="OnFileSelected" accept="*/*" style="display:none" />
@@ -192,9 +192,8 @@
 @code {
     private static readonly Dictionary<string, string> _approachNames = new()
     {
-        ["A"] = "A — Classify-first",
-        ["B"] = "B — Adaptive prompt",
-        ["C"] = "C — Heuristic",
+        ["A"] = "A — Single call",
+        ["B"] = "B — Spec-first (2 calls)",
     };
 
     private string? _selectedFileName;
@@ -242,9 +241,8 @@
 
             var taskA = ExtractionService.RunApproachAAsync(text, ext, images, cts.Token);
             var taskB = ExtractionService.RunApproachBAsync(text, ext, images, cts.Token);
-            var taskC = ExtractionService.RunApproachCAsync(text, ext, images, cts.Token);
 
-            var all = await Task.WhenAll(taskA, taskB, taskC);
+            var all = await Task.WhenAll(taskA, taskB);
             _results = [.. all];
         }
         catch (Exception ex)

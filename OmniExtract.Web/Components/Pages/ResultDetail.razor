@@ -174,6 +174,63 @@ else
             </div>
         }
 
+        <!-- Verdict Card -->
+        @if (_entry.Output.Data.TryGetValue("verdict", out var verdictObj) && verdictObj is not null)
+        {
+            var verdictJson = ToJsonString(verdictObj);
+            var verdictFlat = ParseJsonObjectFlat(verdictJson);
+            var verdictSummary = verdictFlat.TryGetValue("summary", out var vs) ? vs : null;
+            var verdictActionItems = ParseVerdictActionItems(verdictJson);
+            var verdictFlags = ParseJsonStringArrayFromJson(verdictJson, "flags");
+            @if (!string.IsNullOrEmpty(verdictSummary))
+            {
+                <div class="verdict-card">
+                    <div class="verdict-card-inner">
+
+                        <div class="verdict-top">
+                            <div class="verdict-kicker">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                                <span>Verdict Brief</span>
+                            </div>
+                            @if (m.Confidence < 0.75)
+                            {
+                                <span class="verdict-caveat">partial extraction · @((m.Confidence * 100).ToString("F0"))%</span>
+                            }
+                            @if (verdictFlags.Any())
+                            {
+                                <div class="verdict-flags">
+                                    @foreach (var flag in verdictFlags)
+                                    {
+                                        <span class="verdict-flag-chip">@flag</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <p class="verdict-summary">@verdictSummary</p>
+
+                        @if (verdictActionItems.Any())
+                        {
+                            <div class="verdict-actions">
+                                <div class="verdict-actions-label">
+                                    <span>Action Required</span>
+                                    <span class="verdict-actions-count">@verdictActionItems.Count</span>
+                                </div>
+                                @foreach (var (item, priority) in verdictActionItems)
+                                {
+                                    <div class="verdict-action verdict-action-@priority">
+                                        <span class="verdict-prio-pill">@priority</span>
+                                        <span class="verdict-action-text">@item</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                    </div>
+                </div>
+            }
+        }
+
         <!-- Main layout -->
         <div class="detail-cols">
 
@@ -441,12 +498,13 @@ else
                 <!-- Agent Recommendation -->
                 @if (_entry.Output.Data.TryGetValue("agent_recommendation", out var recObj) && recObj is not null)
                 {
-                    var rec = ParseJsonObjectFlat(recObj.ToString());
+                    var recJson = ToJsonString(recObj);
+                    var rec = ParseJsonObjectFlat(recJson);
                     var agentName = rec.TryGetValue("recommended_agent", out var an) ? an : null;
                     var recDomain = rec.TryGetValue("domain", out var rd) ? rd : null;
                     var recConf = rec.TryGetValue("confidence", out var rc) && double.TryParse(rc, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var rcv) ? (double?)rcv : null;
                     var reasoning = rec.TryGetValue("reasoning", out var rr) ? rr : null;
-                    var signalsRaw = recObj?.ToString() is string recJson ? ParseJsonStringArrayFromJson(recJson, "signals") : new List<string>();
+                    var signalsRaw = ParseJsonStringArrayFromJson(recJson, "signals");
                     if (agentName is not null)
                     {
                         <div class="card recommendation-panel" style="margin-bottom:20px;">
@@ -619,6 +677,32 @@ else
             var obj = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json);
             if (obj is null) return [];
             return obj.ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
+        }
+        catch { return []; }
+    }
+
+    static string ToJsonString(object? obj) => obj switch
+    {
+        null => "null",
+        string s => s,
+        System.Text.Json.JsonElement je => je.ToString(),
+        _ => System.Text.Json.JsonSerializer.Serialize(obj)
+    };
+
+    static List<(string Item, string Priority)> ParseVerdictActionItems(string json)
+    {
+        try
+        {
+            var obj = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+            if (!obj.TryGetProperty("action_items", out var arr)) return [];
+            var result = new List<(string, string)>();
+            foreach (var el in arr.EnumerateArray())
+            {
+                var item = el.TryGetProperty("item", out var i) ? i.GetString() ?? "" : "";
+                var priority = el.TryGetProperty("priority", out var p) ? p.GetString() ?? "medium" : "medium";
+                if (!string.IsNullOrEmpty(item)) result.Add((item, priority));
+            }
+            return result;
         }
         catch { return []; }
     }

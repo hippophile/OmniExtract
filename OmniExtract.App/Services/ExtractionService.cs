@@ -187,12 +187,63 @@ public class ExtractionService
         - Respond with raw, valid JSON only
         """;
 
-    // ── Lab prompts (Approach A and B) ────────────────────────────
+    // ── Lab prompts ────────────────────────────────────────────────
 
     private const string ClassifyPrompt = """
         Classify the following document as either 'structured' (data-heavy: forms, invoices, tables, spreadsheets) or 'narrative' (prose-heavy: reports, emails, contracts, articles).
         Return ONLY valid JSON with no markdown fences:
         {"classification":"structured|narrative","confidence":0.0,"reason":"one sentence"}
+        """;
+
+    private const string SpecPrompt = """
+        You are a document intelligence engine. Your job is NOT to extract yet — only to read and plan.
+
+        Read the document and output a JSON spec describing what an expert would extract from it.
+
+        Return ONLY valid JSON with no markdown fences:
+        {
+          "document_type": "specific type (e.g. 'software licence renewal email', not just 'email')",
+          "domain": "finance|legal|hr|technical|medical|general",
+          "classification": "structured|narrative",
+          "fields_to_extract": ["field_name_1", "field_name_2"],
+          "table_hints": ["brief description of any tables present, or empty array"],
+          "reasoning": "one sentence: why these fields matter for this document type"
+        }
+
+        RULES:
+        - fields_to_extract: 8–20 snake_case field names an expert in this domain would want
+        - Be specific: not 'amount' but 'renewal_fee_gbp', not 'date' but 'renewal_date'
+        - Never wrap in markdown fences
+        - Raw JSON only
+        """;
+
+    private const string SpecExtractionPrompt = """
+        You are a document extraction engine. Extract exactly the fields listed below from the document.
+
+        Return ONLY valid JSON with no markdown fences matching this schema:
+        {
+          "meta": {
+            "document_type": "string",
+            "language": ["ISO-code"],
+            "confidence": 0.0,
+            "extraction_method": "text",
+            "warnings": []
+          },
+          "tags": ["tag1", "tag2"],
+          "categories": {
+            "domain": "string",
+            "subdomain": "string",
+            "sensitivity": "public|internal|confidential|restricted"
+          },
+          "data": {},
+          "tables": []
+        }
+
+        RULES:
+        - Extract only what is present — never invent values
+        - Use the exact field names from the spec
+        - If a field is not in the document, omit it (do not output null)
+        - Raw JSON only
         """;
 
     private const string AdaptivePrompt = """
@@ -269,7 +320,7 @@ public class ExtractionService
         _logger = logger;
     }
 
-    public async Task<UniversalOutput> ExtractAsync(string filePath, ExtractionResult extracted, AnalysisMode mode = AnalysisMode.Standard, CancellationToken ct = default)
+    public async Task<UniversalOutput> ExtractAsync(string filePath, ExtractionResult extracted, AnalysisMode mode = AnalysisMode.Standard, Action<string>? onStage = null, CancellationToken ct = default)
     {
         var meta = new OutputMeta { SourceFile = Path.GetFileName(filePath) };
 
@@ -301,9 +352,9 @@ public class ExtractionService
                     var meaningfulCount = CountMeaningfulFields(result.Data);
                     if (meaningfulCount < _settings.HeuristicFallbackThreshold)
                     {
-                        _logger.LogInformation("Heuristic yielded {Count} meaningful fields — escalating to TextRich", meaningfulCount);
-                        result = await ExtractTextAdaptiveAsync(extracted.Text, mode, ct);
-                        result.Meta.Strategy = "heuristic→text-rich";
+                        _logger.LogInformation("Heuristic yielded {Count} meaningful fields — escalating to spec-first", meaningfulCount);
+                        result = await ExtractTextAdaptiveAsync(extracted.Text, mode, onStage, ct);
+                        result.Meta.Strategy = "heuristic→spec-first";
                     }
                     else
                     {
@@ -311,10 +362,10 @@ public class ExtractionService
                     }
                     break;
 
-                default: // TextRich
+                default: // spec-first
                     meta.ExtractionMethod = "text";
-                    result = await ExtractTextAdaptiveAsync(extracted.Text, mode, ct);
-                    result.Meta.Strategy = "text-rich";
+                    result = await ExtractTextAdaptiveAsync(extracted.Text, mode, onStage, ct);
+                    result.Meta.Strategy = "spec-first";
                     break;
             }
 
@@ -352,24 +403,49 @@ public class ExtractionService
     private static int CountMeaningfulFields(Dictionary<string, object?> data) =>
         data.Keys.Count(k => !InjectedMetaKeys.Contains(k));
 
-    private async Task<UniversalOutput> ExtractTextAdaptiveAsync(string text, AnalysisMode mode, CancellationToken ct)
+    private async Task<UniversalOutput> ExtractTextAdaptiveAsync(string text, AnalysisMode mode, Action<string>? onStage, CancellationToken ct)
     {
-        var messages = new List<GptMessage>
+        // Call 1: build field spec
+        onStage?.Invoke("Building field spec...");
+        var specMessages = new List<GptMessage>
         {
-            new SystemGptMessage(AdaptivePrompt),
+            new SystemGptMessage(SpecPrompt),
             new UserGptMessage(text)
         };
-        var raw = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct);
-        var cleaned = LineCommentRegex.Replace(raw, string.Empty);
+        var specRaw = await _gpt.CallAsync(specMessages, ct: ct);
+        var specCleaned = LineCommentRegex.Replace(specRaw, string.Empty);
+
+        string fieldList = "all meaningful fields";
+        string tableHintText = string.Empty;
+        string docType = "unknown";
+
         try
         {
-            var wrapper = JsonSerializer.Deserialize<JsonNode>(cleaned, JsonOpts);
-            var extractionNode = wrapper?["extraction"];
-            if (extractionNode is not null)
-                return ParseResponse(extractionNode.ToJsonString(), "text/adaptive");
+            var spec = JsonSerializer.Deserialize<JsonNode>(specCleaned, JsonOpts);
+            docType = spec?["document_type"]?.GetValue<string>() ?? "unknown";
+            var fields = spec?["fields_to_extract"]?.AsArray()
+                .Select(f => f?.GetValue<string>()).Where(f => f is not null).ToList() ?? [];
+            var tableHints = spec?["table_hints"]?.AsArray()
+                .Select(f => f?.GetValue<string>()).Where(f => f is not null).ToList() ?? [];
+            if (fields.Count > 0) fieldList = string.Join(", ", fields);
+            if (tableHints.Count > 0) tableHintText = $"\nExpected tables: {string.Join("; ", tableHints)}";
+            _logger.LogInformation("Spec-first: {DocType} — {FieldCount} fields planned", docType, fields.Count);
         }
-        catch { }
-        return ParseResponse(raw, "text/adaptive");
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Spec parse failed — falling back to full field list");
+        }
+
+        // Call 2: extract against spec
+        onStage?.Invoke("Extracting fields...");
+        var extractionInstruction = $"Document type: {docType}\nFields to extract: {fieldList}{tableHintText}";
+        var extractMessages = new List<GptMessage>
+        {
+            new SystemGptMessage(SpecExtractionPrompt),
+            new UserGptMessage($"{extractionInstruction}\n\n---\n\n{text}")
+        };
+        var raw = await _gpt.CallAsync(extractMessages, maxTokens: _settings.MaxOutputTokens, ct: ct);
+        return ParseResponse(raw, "text/spec-first");
     }
 
     private async Task<UniversalOutput> ExtractTextAsync(string text, string ext, AnalysisMode mode, CancellationToken ct)
@@ -473,21 +549,42 @@ public class ExtractionService
         for (var i = 0; i < chunks.Count; i++)
         {
             _logger.LogInformation("Vision chunk {I}/{Total} ({Count} pages)", i + 1, chunks.Count, chunks[i].Length);
-            var prompt = chunks.Count > 1
-                ? $"[Pages {i * chunkSize + 1}-{Math.Min((i + 1) * chunkSize, images.Count)} of {images.Count}]\n\nExtract content from these pages."
-                : "Extract all content from this document.";
-
-            var messages = new List<GptMessage>
-            {
-                new SystemGptMessage(StructuredPrompt),
-                new UserGptMessage(prompt, chunks[i].ToList())
-            };
-
-            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct, model: _visionModel);
-            results.Add(ParseResponse(response, "vision"));
+            var pageStart = i * chunkSize + 1;
+            var pageEnd = Math.Min((i + 1) * chunkSize, images.Count);
+            var chunkResults = await ExtractVisionChunkWithHalvingAsync(chunks[i].ToList(), pageStart, pageEnd, images.Count, ct);
+            results.AddRange(chunkResults);
         }
 
         return MergeResults(results);
+    }
+
+    private async Task<List<UniversalOutput>> ExtractVisionChunkWithHalvingAsync(
+        List<string> chunkImages, int pageStart, int pageEnd, int totalPages, CancellationToken ct, int depth = 0)
+    {
+        var prompt = totalPages > chunkImages.Count || depth > 0
+            ? $"[Pages {pageStart}-{pageEnd} of {totalPages}]\n\nExtract content from these pages."
+            : "Extract all content from this document.";
+
+        var messages = new List<GptMessage>
+        {
+            new SystemGptMessage(StructuredPrompt),
+            new UserGptMessage(prompt, chunkImages)
+        };
+
+        try
+        {
+            var response = await _gpt.CallAsync(messages, maxTokens: _settings.MaxOutputTokens, ct: ct, model: _visionModel);
+            return [ParseResponse(response, "vision")];
+        }
+        catch (Exception ex) when (GptClient.IsPayloadTooLarge(ex) && chunkImages.Count > 1 && depth < 4)
+        {
+            _logger.LogWarning("Vision chunk too large ({Count} pages) — halving (depth {D})", chunkImages.Count, depth + 1);
+            var half = chunkImages.Count / 2;
+            var midPage = pageStart + half - 1;
+            var a = await ExtractVisionChunkWithHalvingAsync(chunkImages[..half], pageStart, midPage, totalPages, ct, depth + 1);
+            var b = await ExtractVisionChunkWithHalvingAsync(chunkImages[half..], midPage + 1, pageEnd, totalPages, ct, depth + 1);
+            return [.. a, .. b];
+        }
     }
 
     // Only strip // comments that appear at line start (after whitespace) — never inside string values
@@ -842,6 +939,88 @@ public class ExtractionService
         return (result, reason);
     }
 
+    // ── Verdict pass ──────────────────────────────────────────────
+
+    private const string VerdictPrompt = """
+        You are a document intelligence analyst. You have received extracted data from a document.
+        Produce a terse analyst brief for a business user.
+
+        Respond ONLY with a valid JSON object — no markdown, no commentary:
+        {
+          "summary": "one punchy sentence: doc type + single most important fact or figure. Example: 'Invoice from Optima Consulting for £8,145 due 3 Jul 2026.' or '2024 annual report for OrbitalExtraction — $1.2B revenue, $855M net profit.'",
+          "action_items": [
+            { "item": "specific action required, citing exact values from the data", "priority": "high|medium|low" }
+          ],
+          "flags": ["notable label 1", "notable label 2"]
+        }
+
+        STRICT RULES:
+        - summary: ONE sentence max, telegraphic — doc type, key number/date/party. No padding, no "this document is a..."
+        - action_items: ONLY flag items EXPLICITLY PRESENT in the extracted data — deadlines, missing signatures, amounts needing approval, risks
+        - DO NOT infer or hallucinate — if a deadline is not in the data, do not flag one
+        - priority: high = deadline within 30 days or missing required signature; medium = notable but not urgent; low = informational
+        - flags: 0-3 brief labels (e.g. "contains deadline", "requires signature", "high value transaction")
+        - action_items may be an empty array if no action is required
+        - Raw JSON only
+        """;
+
+    public async Task<Dictionary<string, object?>?> VerdictPassAsync(UniversalOutput result, CancellationToken ct)
+    {
+        var meaningfulCount = result.Data.Keys.Count(k =>
+            !InjectedMetaKeys.Contains(k) &&
+            !k.Equals("agent_recommendation", StringComparison.OrdinalIgnoreCase));
+
+        if (meaningfulCount < 3)
+        {
+            result.Meta.Warnings.Add("Verdict skipped — fewer than 3 meaningful fields extracted.");
+            return null;
+        }
+
+        try
+        {
+            var input = BuildVerdictInput(result);
+            var messages = new List<GptMessage>
+            {
+                new SystemGptMessage(VerdictPrompt),
+                new UserGptMessage(input)
+            };
+            var response = await _gpt.CallAsync(messages, temperature: 0, ct: ct);
+            var cleaned = LineCommentRegex.Replace(response, string.Empty);
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(cleaned, JsonOpts);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Verdict pass timed out — skipping");
+            result.Meta.Warnings.Add("Verdict pass timed out.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Verdict pass failed — skipping");
+            result.Meta.Warnings.Add("Verdict pass failed.");
+            return null;
+        }
+    }
+
+    private static string BuildVerdictInput(UniversalOutput result)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"document_type: {result.Meta.DocumentType}");
+        sb.AppendLine($"domain: {result.Categories.Domain}");
+        if (result.Tags.Any())
+            sb.AppendLine($"tags: {string.Join(", ", result.Tags.Take(15))}");
+        sb.AppendLine("extracted_fields:");
+        foreach (var (k, v) in result.Data)
+        {
+            if (InjectedMetaKeys.Contains(k) || k.Equals("agent_recommendation", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var valStr = v?.ToString() ?? "";
+            if (valStr.Length > 200) valStr = valStr[..200] + "...";
+            sb.AppendLine($"  {k}: {valStr}");
+        }
+        return sb.ToString().Trim();
+    }
+
     // ── Recommendation pass ───────────────────────────────────────
 
     public async Task<Dictionary<string, object?>?> RecommendationPassAsync(UniversalOutput result, CancellationToken ct)
@@ -895,6 +1074,7 @@ public class ExtractionService
 
     // ── Lab approach runners ──────────────────────────────────────
 
+    // A — Single call: AdaptivePrompt classifies + extracts in one shot
     public async Task<LabApproachResult> RunApproachAAsync(string text, string ext, List<string>? images, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -904,51 +1084,7 @@ public class ExtractionService
             {
                 var output = await ExtractVisionAsync(images, ct);
                 sw.Stop();
-                return new LabApproachResult("A — Classify-first", output.Meta.DocumentType ?? "structured", (float)output.Meta.Confidence, output, sw.Elapsed, null);
-            }
-
-            // Call 1: classify via API
-            var classifyMessages = new List<GptMessage>
-            {
-                new SystemGptMessage(ClassifyPrompt),
-                new UserGptMessage(text)
-            };
-            var classifyRaw = await _gpt.CallAsync(classifyMessages, ct: ct);
-            var classifyJson = JsonSerializer.Deserialize<JsonNode>(classifyRaw, JsonOpts);
-            var classification = classifyJson?["classification"]?.GetValue<string>() ?? "narrative";
-            var confidence = classifyJson?["confidence"]?.GetValue<float>() ?? 0f;
-            var reason = classifyJson?["reason"]?.GetValue<string>();
-
-            // Call 2: extract with appropriate prompt
-            var extractPrompt = classification == "structured" ? StructuredPrompt : NarrativePrompt;
-            var extractMessages = new List<GptMessage>
-            {
-                new SystemGptMessage(extractPrompt),
-                new UserGptMessage(text)
-            };
-            var extractRaw = await _gpt.CallAsync(extractMessages, ct: ct);
-            var textOutput = ParseResponse(extractRaw, $"text/{classification}");
-
-            sw.Stop();
-            return new LabApproachResult("A — Classify-first", classification, confidence, textOutput, sw.Elapsed, null, reason);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new LabApproachResult("A — Classify-first", "error", 0f, null, sw.Elapsed, ex.Message);
-        }
-    }
-
-    public async Task<LabApproachResult> RunApproachBAsync(string text, string ext, List<string>? images, CancellationToken ct)
-    {
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            if (images is { Count: > 0 })
-            {
-                var output = await ExtractVisionAsync(images, ct);
-                sw.Stop();
-                return new LabApproachResult("B — Adaptive prompt", output.Meta.DocumentType ?? "structured", (float)output.Meta.Confidence, output, sw.Elapsed, null);
+                return new LabApproachResult("A — Single call", output.Meta.DocumentType ?? "unknown", (float)output.Meta.Confidence, output, sw.Elapsed, null);
             }
 
             var messages = new List<GptMessage>
@@ -971,16 +1107,17 @@ public class ExtractionService
                 output2 = ParseResponse(extractionNode.ToJsonString(), $"text/{classification}");
 
             sw.Stop();
-            return new LabApproachResult("B — Adaptive prompt", classification, confidence, output2, sw.Elapsed, null, reason);
+            return new LabApproachResult("A — Single call", classification, confidence, output2, sw.Elapsed, null, reason);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return new LabApproachResult("B — Adaptive prompt", "error", 0f, null, sw.Elapsed, ex.Message);
+            return new LabApproachResult("A — Single call", "error", 0f, null, sw.Elapsed, ex.Message);
         }
     }
 
-    public async Task<LabApproachResult> RunApproachCAsync(string text, string ext, List<string>? images, CancellationToken ct)
+    // B — Spec-first: Call 1 builds field spec, Call 2 extracts against it
+    public async Task<LabApproachResult> RunApproachBAsync(string text, string ext, List<string>? images, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
@@ -989,27 +1126,56 @@ public class ExtractionService
             {
                 var output = await ExtractVisionAsync(images, ct);
                 sw.Stop();
-                return new LabApproachResult("C — Heuristic", output.Meta.DocumentType ?? "structured", -1f, output, sw.Elapsed, null);
+                return new LabApproachResult("B — Spec-first (2 calls)", output.Meta.DocumentType ?? "unknown", (float)output.Meta.Confidence, output, sw.Elapsed, null);
             }
 
-            var (classification, cReason) = ClassifyDocumentWithReason(text, ext);
-
-            var extractPrompt = classification == "structured" ? StructuredPrompt : NarrativePrompt;
-            var extractMessages = new List<GptMessage>
+            // Call 1: build extraction spec
+            var specMessages = new List<GptMessage>
             {
-                new SystemGptMessage(extractPrompt),
+                new SystemGptMessage(SpecPrompt),
                 new UserGptMessage(text)
             };
-            var raw = await _gpt.CallAsync(extractMessages, ct: ct);
-            var textOutput = ParseResponse(raw, $"text/{classification}");
+            var specRaw = await _gpt.CallAsync(specMessages, ct: ct);
+            var specCleaned = LineCommentRegex.Replace(specRaw, string.Empty);
+            var spec = JsonSerializer.Deserialize<JsonNode>(specCleaned, JsonOpts);
+
+            var docType = spec?["document_type"]?.GetValue<string>() ?? "unknown";
+            var classification = spec?["classification"]?.GetValue<string>() ?? "narrative";
+            var reason = spec?["reasoning"]?.GetValue<string>();
+            var fields = spec?["fields_to_extract"]?.AsArray()
+                .Select(f => f?.GetValue<string>())
+                .Where(f => f is not null)
+                .ToList() ?? [];
+            var tableHints = spec?["table_hints"]?.AsArray()
+                .Select(f => f?.GetValue<string>())
+                .Where(f => f is not null)
+                .ToList() ?? [];
+
+            var fieldList = fields.Count > 0
+                ? string.Join(", ", fields)
+                : "all meaningful fields";
+
+            var tableHintText = tableHints.Count > 0
+                ? $"\nExpected tables: {string.Join("; ", tableHints)}"
+                : string.Empty;
+
+            // Call 2: extract against spec
+            var extractionInstruction = $"Document type: {docType}\nFields to extract: {fieldList}{tableHintText}";
+            var extractMessages = new List<GptMessage>
+            {
+                new SystemGptMessage(SpecExtractionPrompt),
+                new UserGptMessage($"{extractionInstruction}\n\n---\n\n{text}")
+            };
+            var extractRaw = await _gpt.CallAsync(extractMessages, ct: ct);
+            var output2 = ParseResponse(extractRaw, "text/spec-first");
 
             sw.Stop();
-            return new LabApproachResult("C — Heuristic", classification, -1f, textOutput, sw.Elapsed, null, cReason);
+            return new LabApproachResult("B — Spec-first (2 calls)", classification, (float)output2.Meta.Confidence, output2, sw.Elapsed, null, reason);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return new LabApproachResult("C — Heuristic", "error", -1f, null, sw.Elapsed, ex.Message);
+            return new LabApproachResult("B — Spec-first (2 calls)", "error", 0f, null, sw.Elapsed, ex.Message);
         }
     }
 }

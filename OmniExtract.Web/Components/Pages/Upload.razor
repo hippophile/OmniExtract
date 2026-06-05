@@ -219,7 +219,7 @@
 </div>
 
 @code {
-    static readonly string[] _stepLabels = ["Parse", "Extract Text", "Chunk", "AI Analysis", "Recommend", "Done"];
+    static readonly string[] _stepLabels = ["Parse", "Extract Text", "Chunk", "Build Spec", "Extract Fields", "Recommend", "Verdict", "Done"];
 
     System.Timers.Timer? _ticker;
     bool _dragOver;
@@ -259,9 +259,11 @@
         "Parsing file..."         => 0,
         "Extracting content..."   => 1,
         "Chunking document..."    => 2,
-        "Running AI analysis..."  => 3,
-        "Agent recommendation..." => 4,
-        "Complete"                => 5,
+        "Building field spec..."  => 3,
+        "Extracting fields..."    => 4,
+        "Agent recommendation..." => 5,
+        "Generating verdict..."   => 6,
+        "Complete"                => 7,
         "Cancelled"               => 0,
         _                         => 0
     };

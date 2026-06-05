@@ -174,6 +174,10 @@ public class GptClient : IAsyncDisposable
         ex.ToString().Contains("prompt token count", StringComparison.OrdinalIgnoreCase) &&
         ex.ToString().Contains("exceeds the limit", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsPayloadTooLarge(Exception ex) =>
+        ex.ToString().Contains("413", StringComparison.OrdinalIgnoreCase) ||
+        ex.ToString().Contains("Request Entity Too Large", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsRateLimit(Exception ex)
     {
         var err = ex.ToString();
