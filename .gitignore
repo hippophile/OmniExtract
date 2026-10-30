@@ -3,3 +3,6 @@ obj/
 *.user
 .env
 .env.*
+
+# user-uploaded documents, never commit
+OmniExtract.Web/wwwroot/uploads/
